@@ -20,8 +20,14 @@ export async function PUT(request: Request) {
     const body = await request.json() as Partial<StoreSettings>;
     const values: Record<string, string> = {
       store_name: String(body.storeName ?? "").slice(0, 180),
-      tax_id: String(body.taxId ?? "").slice(0, 30),
+      legal_name: String(body.legalName ?? "").slice(0, 220),
+      branch_name: String(body.branchName ?? "").slice(0, 100),
+      branch_code: String(body.branchCode ?? "00000").replace(/\D/g, "").slice(0, 5).padStart(5, "0"),
+      tax_id: String(body.taxId ?? "").replace(/\D/g, "").slice(0, 13),
       phone: String(body.phone ?? "").slice(0, 30),
+      email: String(body.email ?? "").slice(0, 180),
+      line_id: String(body.lineId ?? "").slice(0, 80),
+      business_hours: String(body.businessHours ?? "").slice(0, 180),
       address: String(body.address ?? "").slice(0, 500),
       vat_rate: String(Math.max(0, Math.min(20, Number(body.vatRate) || 0))),
       low_stock_threshold: String(Math.max(0, Math.min(9999, Number(body.lowStockThreshold) || 0))),

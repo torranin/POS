@@ -83,8 +83,14 @@ await connection.query(`
 
 const settings = {
   store_name: "บ้านช่าง วัสดุก่อสร้าง",
+  legal_name: "บริษัท บ้านช่างวัสดุก่อสร้าง จำกัด",
+  branch_name: "สำนักงานใหญ่",
+  branch_code: "00000",
   tax_id: "0105566123456",
   phone: "02-123-4567",
+  email: "contact@baanchang.co.th",
+  line_id: "@baanchang",
+  business_hours: "จันทร์–เสาร์ 07:30–18:00 น.",
   address: "99/9 ถนนร่มเกล้า กรุงเทพมหานคร 10520",
   vat_rate: "7",
   low_stock_threshold: "10",

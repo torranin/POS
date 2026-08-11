@@ -14,8 +14,14 @@ export type Product = {
 
 export type StoreSettings = {
   storeName: string;
+  legalName: string;
+  branchName: string;
+  branchCode: string;
   taxId: string;
   phone: string;
+  email: string;
+  lineId: string;
+  businessHours: string;
   address: string;
   vatRate: number;
   lowStockThreshold: number;
@@ -26,8 +32,14 @@ export type StoreSettings = {
 
 export const defaultSettings: StoreSettings = {
   storeName: "บ้านช่าง วัสดุก่อสร้าง",
+  legalName: "บริษัท บ้านช่างวัสดุก่อสร้าง จำกัด",
+  branchName: "สำนักงานใหญ่",
+  branchCode: "00000",
   taxId: "0105566123456",
   phone: "02-123-4567",
+  email: "contact@baanchang.co.th",
+  lineId: "@baanchang",
+  businessHours: "จันทร์–เสาร์ 07:30–18:00 น.",
   address: "99/9 ถนนร่มเกล้า กรุงเทพมหานคร 10520",
   vatRate: 7,
   lowStockThreshold: 10,
@@ -76,8 +88,14 @@ export async function getSettings(): Promise<StoreSettings> {
   const values = Object.fromEntries(rows.map((row) => [row.setting_key, row.setting_value]));
   return {
     storeName: values.store_name ?? defaultSettings.storeName,
+    legalName: values.legal_name ?? defaultSettings.legalName,
+    branchName: values.branch_name ?? defaultSettings.branchName,
+    branchCode: values.branch_code ?? defaultSettings.branchCode,
     taxId: values.tax_id ?? defaultSettings.taxId,
     phone: values.phone ?? defaultSettings.phone,
+    email: values.email ?? defaultSettings.email,
+    lineId: values.line_id ?? defaultSettings.lineId,
+    businessHours: values.business_hours ?? defaultSettings.businessHours,
     address: values.address ?? defaultSettings.address,
     vatRate: Number(values.vat_rate ?? defaultSettings.vatRate),
     lowStockThreshold: Number(values.low_stock_threshold ?? defaultSettings.lowStockThreshold),
