@@ -12,6 +12,12 @@ export type Product = {
   icon: string;
 };
 
+export type ProductCategory = {
+  id: number;
+  name: string;
+  productCount: number;
+};
+
 export type StoreSettings = {
   storeName: string;
   legalName: string;
@@ -88,6 +94,17 @@ export async function getProducts(): Promise<Product[]> {
      ORDER BY p.id`
   );
   return rows.map((row) => ({ ...row, price: Number(row.price), stock: Number(row.stock) }));
+}
+
+export async function getCategories(): Promise<ProductCategory[]> {
+  const [rows] = await pool.query<(RowDataPacket & ProductCategory)[]>(
+    `SELECT c.id, c.name, COUNT(p.id) AS productCount
+     FROM categories c
+     LEFT JOIN products p ON p.category_id = c.id AND p.is_active = 1
+     GROUP BY c.id, c.name
+     ORDER BY c.id`
+  );
+  return rows.map((row) => ({ id: Number(row.id), name: row.name, productCount: Number(row.productCount) }));
 }
 
 export async function checkDatabase(): Promise<boolean> {

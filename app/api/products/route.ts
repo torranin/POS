@@ -25,6 +25,36 @@ export async function POST(request: Request) {
   }
 }
 
+export async function PATCH(request: Request) {
+  const user = await getCurrentUser();
+  if (!user || !canAccess(user.role, "manage_products")) return NextResponse.json({ message: "ไม่มีสิทธิ์จัดการสินค้า" }, { status: 403 });
+  try {
+    const body = await request.json();
+    const id = Number(body.id);
+    const sku = String(body.sku ?? "").trim().toUpperCase();
+    const name = String(body.name ?? "").trim();
+    const category = String(body.category ?? "").trim();
+    const unit = String(body.unit ?? "").trim();
+    const price = Number(body.price);
+    const stock = Math.floor(Number(body.stock));
+    if (!Number.isInteger(id) || id <= 0 || !sku || !name || !category || !unit || price < 0 || stock < 0) return NextResponse.json({ message: "ข้อมูลสินค้าไม่ถูกต้อง" }, { status: 400 });
+    await pool.execute("INSERT IGNORE INTO categories (name) VALUES (?)", [category]);
+    const [result] = await pool.execute<ResultSetHeader>(
+      `UPDATE products p
+       JOIN categories c ON c.name = ?
+       SET p.sku = ?, p.name = ?, p.category_id = c.id, p.unit = ?, p.price = ?, p.stock = ?
+       WHERE p.id = ? AND p.is_active = 1`,
+      [category, sku, name, unit, price, stock, id]
+    );
+    if (!result.affectedRows) return NextResponse.json({ message: "ไม่พบสินค้าที่ต้องการแก้ไข" }, { status: 404 });
+    const products = await getProducts();
+    return NextResponse.json(products.find((p)=>p.id===id));
+  } catch (error) {
+    const duplicate = error instanceof Error && "code" in error && error.code === "ER_DUP_ENTRY";
+    return NextResponse.json({ message: duplicate ? "รหัส SKU นี้มีอยู่แล้ว" : "แก้ไขสินค้าไม่สำเร็จ" }, { status: duplicate ? 409 : 500 });
+  }
+}
+
 export async function DELETE(request: Request) {
   const user = await getCurrentUser();
   if (!user || !canAccess(user.role, "manage_products")) return NextResponse.json({ message: "ไม่มีสิทธิ์จัดการสินค้า" }, { status: 403 });

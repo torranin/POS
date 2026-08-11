@@ -1,4 +1,4 @@
-import { checkDatabase, defaultSettings, getProducts, getSettings, type Product } from "@/lib/db";
+import { checkDatabase, defaultSettings, getCategories, getProducts, getSettings, type Product, type ProductCategory } from "@/lib/db";
 import POSDashboard from "./pos-dashboard";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
@@ -15,22 +15,29 @@ const fallbackProducts: Product[] = [
   { id: 7, sku: "SND-050", name: "ทรายหยาบคัดพิเศษ", category: "วัสดุพื้นฐาน", unit: "คิว", price: 620, stock: 32, color: "#eee0c5", icon: "sand" },
   { id: 8, sku: "ROF-760", name: "กระเบื้องลอนคู่ สีเทา", category: "หลังคา", unit: "แผ่น", price: 78, stock: 210, color: "#dfe4e3", icon: "roof" },
 ];
+const fallbackCategories: ProductCategory[] = [...new Set(fallbackProducts.map((product) => product.category))].map((name, index) => ({
+  id: index + 1,
+  name,
+  productCount: fallbackProducts.filter((product) => product.category === name).length,
+}));
 
 export default async function Home() {
   const currentUser = await getCurrentUser();
   if (!currentUser) redirect("/login");
   let products = fallbackProducts;
+  let categories = fallbackCategories;
   let settings = defaultSettings;
   let databaseConnected = false;
   try {
     databaseConnected = await checkDatabase();
     if (databaseConnected) {
       products = await getProducts();
+      categories = await getCategories();
       settings = await getSettings();
     }
   } catch {
     databaseConnected = false;
   }
 
-  return <POSDashboard products={products} databaseConnected={databaseConnected} initialSettings={settings} currentUser={currentUser} />;
+  return <POSDashboard products={products} categories={categories} databaseConnected={databaseConnected} initialSettings={settings} currentUser={currentUser} />;
 }
