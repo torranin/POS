@@ -1,4 +1,5 @@
 import mysql from "mysql2/promise";
+import { randomBytes, scryptSync } from "node:crypto";
 
 const database = process.env.MYSQL_DATABASE || "baan_chang_pos";
 if (!/^[a-zA-Z0-9_]+$/.test(database)) throw new Error("Invalid database name");
@@ -58,6 +59,26 @@ await connection.query(`
     setting_value TEXT NOT NULL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(60) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    display_name VARCHAR(120) NOT NULL,
+    role ENUM('admin','manager','warehouse','user') NOT NULL DEFAULT 'user',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    last_login_at DATETIME NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS user_sessions (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    token_hash CHAR(64) NOT NULL UNIQUE,
+    expires_at DATETIME NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_session_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_session_expires (expires_at)
+  );
 `);
 
 const settings = {
@@ -73,6 +94,25 @@ const settings = {
 };
 for (const [key, value] of Object.entries(settings)) {
   await connection.execute("INSERT IGNORE INTO store_settings (setting_key, setting_value) VALUES (?, ?)", [key, value]);
+}
+
+function hashPassword(password) {
+  const salt = randomBytes(16).toString("hex");
+  const hash = scryptSync(password, salt, 64).toString("hex");
+  return `${salt}:${hash}`;
+}
+
+const initialUsers = [
+  ["admin", "ผู้ดูแลระบบ", "admin", process.env.DEFAULT_ADMIN_PASSWORD || "Admin@1234"],
+  ["manager", "ผู้จัดการร้าน", "manager", process.env.DEFAULT_MANAGER_PASSWORD || "Manager@1234"],
+  ["warehouse", "เจ้าหน้าที่คลัง", "warehouse", process.env.DEFAULT_WAREHOUSE_PASSWORD || "Warehouse@1234"],
+  ["cashier", "พนักงานขาย", "user", process.env.DEFAULT_CASHIER_PASSWORD || "Cashier@1234"],
+];
+for (const [username, displayName, role, password] of initialUsers) {
+  await connection.execute(
+    "INSERT IGNORE INTO users (username, password_hash, display_name, role) VALUES (?, ?, ?, ?)",
+    [username, hashPassword(password), displayName, role]
+  );
 }
 
 const categoryNames = ["ปูนและซีเมนต์", "เหล็ก", "อิฐและบล็อก", "สีและเคมีภัณฑ์", "ประปา", "เครื่องมือช่าง", "วัสดุพื้นฐาน", "หลังคา"];

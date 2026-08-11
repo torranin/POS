@@ -1,5 +1,7 @@
 import { checkDatabase, defaultSettings, getProducts, getSettings, type Product } from "@/lib/db";
 import POSDashboard from "./pos-dashboard";
+import { getCurrentUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +17,8 @@ const fallbackProducts: Product[] = [
 ];
 
 export default async function Home() {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) redirect("/login");
   let products = fallbackProducts;
   let settings = defaultSettings;
   let databaseConnected = false;
@@ -28,5 +32,5 @@ export default async function Home() {
     databaseConnected = false;
   }
 
-  return <POSDashboard products={products} databaseConnected={databaseConnected} initialSettings={settings} />;
+  return <POSDashboard products={products} databaseConnected={databaseConnected} initialSettings={settings} currentUser={currentUser} />;
 }

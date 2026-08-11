@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSettings, pool, type StoreSettings } from "@/lib/db";
+import { canAccess, getCurrentUser } from "@/lib/auth";
 
 export async function GET() {
   try {
+    const user = await getCurrentUser();
+    if (!user) return NextResponse.json({ message: "กรุณาเข้าสู่ระบบ" }, { status: 401 });
     return NextResponse.json(await getSettings());
   } catch {
     return NextResponse.json({ message: "ไม่สามารถอ่านการตั้งค่าได้" }, { status: 500 });
@@ -11,6 +14,9 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   try {
+    const user = await getCurrentUser();
+    if (!user) return NextResponse.json({ message: "กรุณาเข้าสู่ระบบ" }, { status: 401 });
+    if (!canAccess(user.role, "manage_settings")) return NextResponse.json({ message: "ไม่มีสิทธิ์ตั้งค่าระบบ" }, { status: 403 });
     const body = await request.json() as Partial<StoreSettings>;
     const values: Record<string, string> = {
       store_name: String(body.storeName ?? "").slice(0, 180),

@@ -2,21 +2,24 @@
 
 import {
   BarChart3, Bell, Boxes, Building2, Check, ChevronDown, CircleUserRound,
-  ClipboardList, CreditCard, FileText, Hammer, HardHat, MapPin, Menu, Minus,
+  ClipboardList, CreditCard, FileText, Hammer, HardHat, LogOut, MapPin, Menu, Minus,
   PackageCheck, PackagePlus, PackageSearch, PanelLeftClose, PanelLeftOpen, Pencil, Phone, Plus, Printer,
   ReceiptText, RotateCcw, Save, Search, Settings, ShoppingCart, SlidersHorizontal,
-  Store, Trash2, Truck, WalletCards, Wifi,
+  Store, Trash2, Truck, UserCog, WalletCards, Wifi, X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Product, StoreSettings } from "@/lib/db";
+import type { CurrentUser } from "@/lib/auth";
+import { canAccess, roleLabels, type UserRole } from "@/lib/roles";
 
 type CartItem = Product & { qty: number };
-type PageKey = "pos" | "products" | "sales" | "delivery" | "reports" | "settings";
-type SettingsSection = "store" | "sales" | "receipt" | "inventory";
-type Props = { products: Product[]; databaseConnected: boolean; initialSettings: StoreSettings };
+type PageKey = "pos" | "products" | "sales" | "delivery" | "reports" | "settings" | "users";
+type SettingsSection = "store" | "sales" | "receipt" | "inventory" | "users";
+type Props = { products: Product[]; databaseConnected: boolean; initialSettings: StoreSettings; currentUser: CurrentUser };
+type ManagedUser = { id: number; username: string; displayName: string; role: UserRole; isActive: number; lastLoginAt: string | null };
 
 const categories = ["ทั้งหมด", "ปูนและซีเมนต์", "เหล็ก", "อิฐและบล็อก", "สีและเคมีภัณฑ์", "ประปา", "เครื่องมือช่าง"];
-const pageNames: Record<PageKey, string> = { pos: "ขายหน้าร้าน", products: "สินค้าและสต็อก", sales: "รายการขาย", delivery: "งานจัดส่ง", reports: "รายงานภาพรวม", settings: "ตั้งค่าระบบ" };
+const pageNames: Record<PageKey, string> = { pos: "ขายหน้าร้าน", products: "สินค้าและสต็อก", sales: "รายการขาย", delivery: "งานจัดส่ง", reports: "รายงานภาพรวม", settings: "ตั้งค่าระบบ", users: "จัดการผู้ใช้งาน" };
 const sales = [
   { no: "POS-0826", time: "14:32", customer: "ลูกค้าทั่วไป", items: 3, payment: "เงินสด", total: 1856.35, status: "สำเร็จ" },
   { no: "POS-0825", time: "13:48", customer: "หจก. รุ่งเรืองก่อสร้าง", items: 12, payment: "โอน / QR", total: 12840, status: "สำเร็จ" },
@@ -39,7 +42,7 @@ function Metric({ label, value, note, icon, tone = "navy" }: { label: string; va
   return <article className="metric-card"><span className={`metric-icon ${tone}`}>{icon}</span><div><p>{label}</p><strong>{value}</strong><small>{note}</small></div></article>;
 }
 
-export default function POSDashboard({ products, databaseConnected, initialSettings }: Props) {
+export default function POSDashboard({ products, databaseConnected, initialSettings, currentUser }: Props) {
   const [activePage, setActivePage] = useState<PageKey>("pos");
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
   const [query, setQuery] = useState("");
@@ -50,6 +53,18 @@ export default function POSDashboard({ products, databaseConnected, initialSetti
   const [savedSettings, setSavedSettings] = useState(initialSettings);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("store");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [inventoryProducts, setInventoryProducts] = useState(products);
+  const [showProductForm, setShowProductForm] = useState(false);
+  const [productDraft, setProductDraft] = useState({ sku: "", name: "", category: "ปูนและซีเมนต์", unit: "ชิ้น", price: 0, stock: 0 });
+  const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [showUserForm, setShowUserForm] = useState(false);
+  const [userDraft, setUserDraft] = useState<{username:string;displayName:string;password:string;role:UserRole}>({ username: "", displayName: "", password: "", role: "user" });
+  const [actionError, setActionError] = useState("");
+  const canManageProducts = canAccess(currentUser.role, "manage_products");
+
+  useEffect(() => {
+    if (activePage === "settings" && settingsSection === "users" && currentUser.role === "admin") fetch("/api/users").then((r)=>r.json()).then(setUsers).catch(()=>setActionError("โหลดรายชื่อผู้ใช้ไม่สำเร็จ"));
+  }, [activePage, settingsSection, currentUser.role]);
 
   const filtered = useMemo(() => products.filter((p) => {
     const matchesCategory = category === "ทั้งหมด" || p.category === category;
@@ -86,14 +101,41 @@ export default function POSDashboard({ products, databaseConnected, initialSetti
       window.setTimeout(() => setSaveState("idle"), 2200);
     } catch { setSaveState("error"); }
   }
+  async function logout() { await fetch("/api/auth/logout", { method: "POST" }); window.location.href = "/login"; }
+  async function addProduct(event: React.FormEvent) {
+    event.preventDefault(); setActionError("");
+    const response = await fetch("/api/products", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(productDraft) });
+    const data = await response.json(); if (!response.ok) { setActionError(data.message); return; }
+    setInventoryProducts((items)=>[...items,data]); setShowProductForm(false); setProductDraft({ sku:"",name:"",category:"ปูนและซีเมนต์",unit:"ชิ้น",price:0,stock:0 });
+  }
+  async function removeProduct(id:number) {
+    if (!window.confirm("ยืนยันการลบสินค้านี้ออกจากรายการขาย?")) return;
+    const response = await fetch(`/api/products?id=${id}`,{method:"DELETE"});
+    if (response.ok) setInventoryProducts((items)=>items.filter((p)=>p.id!==id));
+  }
+  async function addUser(event:React.FormEvent) {
+    event.preventDefault(); setActionError("");
+    const response=await fetch("/api/users",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(userDraft)}); const data=await response.json();
+    if(!response.ok){setActionError(data.message);return} setShowUserForm(false); setUserDraft({username:"",displayName:"",password:"",role:"user"});
+    const refreshed=await fetch("/api/users").then(r=>r.json()); setUsers(refreshed);
+  }
+  async function toggleUser(user:ManagedUser) {
+    const response=await fetch("/api/users",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:user.id,isActive:!user.isActive})});
+    if(response.ok)setUsers(items=>items.map(item=>item.id===user.id?{...item,isActive:item.isActive?0:1}:item));
+  }
+  async function resetUserPassword(user:ManagedUser) {
+    const password=window.prompt(`ตั้งรหัสผ่านใหม่สำหรับ ${user.displayName} (อย่างน้อย 8 ตัวอักษร)`); if(!password)return;
+    const response=await fetch("/api/users",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:user.id,password})}); const data=await response.json();
+    window.alert(response.ok?"เปลี่ยนรหัสผ่านเรียบร้อย":data.message);
+  }
 
-  const navItems: { key: PageKey; label: string; icon: React.ReactNode }[] = [
-    { key: "pos", label: "ขายสินค้า", icon: <ShoppingCart /> },
-    { key: "products", label: "สินค้า", icon: <Boxes /> },
-    { key: "sales", label: "รายการขาย", icon: <ClipboardList /> },
-    { key: "delivery", label: "จัดส่ง", icon: <Truck /> },
-    { key: "reports", label: "รายงาน", icon: <BarChart3 /> },
-  ];
+  const navItems = ([
+    { key: "pos", label: "ขายสินค้า", icon: <ShoppingCart />, show: true },
+    { key: "products", label: "สินค้า", icon: <Boxes />, show: true },
+    { key: "sales", label: "รายการขาย", icon: <ClipboardList />, show: canAccess(currentUser.role,"sales") },
+    { key: "delivery", label: "จัดส่ง", icon: <Truck />, show: canAccess(currentUser.role,"delivery") },
+    { key: "reports", label: "รายงาน", icon: <BarChart3 />, show: canAccess(currentUser.role,"reports") },
+  ] satisfies { key: PageKey; label: string; icon: React.ReactNode; show: boolean }[]).filter((item)=>item.show);
 
   return (
     <main className={`app-shell ${sidebarExpanded ? "sidebar-is-expanded" : "sidebar-is-collapsed"}`}>
@@ -101,7 +143,8 @@ export default function POSDashboard({ products, databaseConnected, initialSetti
         <div className="brand-mark"><HardHat size={26} /><div><strong>บ้านช่าง</strong><span>BAAN CHANG</span></div></div>
         <nav aria-label="เมนูหลัก">{navItems.map((item) => <button key={item.key} title={sidebarExpanded ? undefined : item.label} className={`nav-item ${activePage === item.key ? "active" : ""}`} aria-label={item.label} onClick={() => setActivePage(item.key)}>{item.icon}<span>{item.label}</span></button>)}</nav>
         <div className="sidebar-bottom">
-          <button title={sidebarExpanded ? undefined : "ตั้งค่าระบบ"} className={`nav-item ${activePage === "settings" ? "active" : ""}`} aria-label="ตั้งค่าระบบ" onClick={() => setActivePage("settings")}><Settings /><span>ตั้งค่าระบบ</span></button>
+          {canAccess(currentUser.role,"manage_settings") && <button title={sidebarExpanded ? undefined : "ตั้งค่าระบบ"} className={`nav-item ${activePage === "settings" ? "active" : ""}`} aria-label="ตั้งค่าระบบ" onClick={() => setActivePage("settings")}><Settings /><span>ตั้งค่าระบบ</span></button>}
+          <button title={sidebarExpanded ? undefined : "ออกจากระบบ"} className="nav-item logout-item" aria-label="ออกจากระบบ" onClick={logout}><LogOut/><span>ออกจากระบบ</span></button>
           <button className="nav-item sidebar-toggle" aria-label={sidebarExpanded ? "ย่อแถบเมนู" : "ขยายแถบเมนู"} aria-expanded={sidebarExpanded} onClick={() => setSidebarExpanded((value) => !value)}>{sidebarExpanded ? <PanelLeftClose /> : <PanelLeftOpen />}<span>ย่อแถบเมนู</span></button>
         </div>
       </aside>
@@ -113,7 +156,7 @@ export default function POSDashboard({ products, databaseConnected, initialSetti
           <div className="topbar-actions">
             <span className={`db-pill ${databaseConnected ? "online" : "offline"}`}><Wifi size={14} /> {databaseConnected ? "ฐานข้อมูลพร้อมใช้" : "ข้อมูลตัวอย่าง"}</span>
             <button className="notification" aria-label="การแจ้งเตือน"><Bell size={18} /><i>{lowStock}</i></button>
-            <div className="cashier"><CircleUserRound /><span><strong>กิตติศักดิ์</strong><small>ผู้ดูแลระบบ</small></span><ChevronDown size={16} /></div>
+            <div className="cashier"><CircleUserRound /><span><strong>{currentUser.displayName}</strong><small>{roleLabels[currentUser.role]}</small></span><ChevronDown size={16} /></div>
           </div>
         </header>
 
@@ -134,9 +177,9 @@ export default function POSDashboard({ products, databaseConnected, initialSetti
         </div>}
 
         {activePage === "products" && <div className="page-content">
-          <div className="page-actions"><div><p>จัดการสินค้า ราคา และจำนวนคงเหลือ</p></div><button className="outline-action"><FileText size={17} /> นำเข้า Excel</button><button className="primary-action"><PackagePlus size={17} /> เพิ่มสินค้าใหม่</button></div>
-          <div className="metrics"><Metric label="สินค้าทั้งหมด" value={`${products.length} รายการ`} note="ใช้งานอยู่ทั้งหมด" icon={<Boxes />} /><Metric label="มูลค่าสต็อก" value={`฿${products.reduce((s,p)=>s+p.price*p.stock,0).toLocaleString("th-TH")}`} note="ราคาขายโดยประมาณ" icon={<WalletCards />} tone="blue" /><Metric label="สต็อกใกล้หมด" value={`${lowStock} รายการ`} note={`ต่ำกว่าหรือเท่ากับ ${settings.lowStockThreshold}`} icon={<Bell />} tone="orange" /><Metric label="หมวดหมู่" value={`${new Set(products.map(p=>p.category)).size} หมวด`} note="จัดหมวดหมู่แล้ว" icon={<SlidersHorizontal />} tone="green" /></div>
-          <section className="data-panel"><div className="panel-toolbar"><label className="table-search"><Search size={17} /><input placeholder="ค้นหาสินค้า SKU หรือหมวดหมู่" /></label><button className="filter-button"><SlidersHorizontal size={16} /> ตัวกรอง</button></div><div className="table-scroll"><table><thead><tr><th>สินค้า</th><th>หมวดหมู่</th><th>ราคาขาย</th><th>คงเหลือ</th><th>สถานะ</th><th></th></tr></thead><tbody>{products.map(p=><tr key={p.id}><td><div className="product-cell"><span style={{background:p.color}}><Hammer size={18}/></span><div><strong>{p.name}</strong><small>{p.sku} · ต่อ{p.unit}</small></div></div></td><td>{p.category}</td><td><strong>฿{p.price.toLocaleString("th-TH")}</strong></td><td>{p.stock.toLocaleString("th-TH")} {p.unit}</td><td><span className={`status-chip ${p.stock <= settings.lowStockThreshold ? "warning":"success"}`}>{p.stock <= settings.lowStockThreshold ? "ใกล้หมด":"พร้อมขาย"}</span></td><td><button className="icon-button"><Pencil size={15}/></button></td></tr>)}</tbody></table></div></section>
+          <div className="page-actions"><div><p>{canManageProducts?"จัดการสินค้า ราคา และจำนวนคงเหลือ":"ดูรายการสินค้าและจำนวนคงเหลือ"}</p></div>{canManageProducts&&<><button className="outline-action"><FileText size={17} /> นำเข้า Excel</button><button className="primary-action" onClick={()=>{setActionError("");setShowProductForm(true)}}><PackagePlus size={17} /> เพิ่มสินค้าใหม่</button></>}</div>
+          <div className="metrics"><Metric label="สินค้าทั้งหมด" value={`${inventoryProducts.length} รายการ`} note="ใช้งานอยู่ทั้งหมด" icon={<Boxes />} /><Metric label="มูลค่าสต็อก" value={`฿${inventoryProducts.reduce((s,p)=>s+p.price*p.stock,0).toLocaleString("th-TH")}`} note="ราคาขายโดยประมาณ" icon={<WalletCards />} tone="blue" /><Metric label="สต็อกใกล้หมด" value={`${inventoryProducts.filter(p=>p.stock<=settings.lowStockThreshold).length} รายการ`} note={`ต่ำกว่าหรือเท่ากับ ${settings.lowStockThreshold}`} icon={<Bell />} tone="orange" /><Metric label="หมวดหมู่" value={`${new Set(inventoryProducts.map(p=>p.category)).size} หมวด`} note="จัดหมวดหมู่แล้ว" icon={<SlidersHorizontal />} tone="green" /></div>
+          <section className="data-panel"><div className="panel-toolbar"><label className="table-search"><Search size={17} /><input placeholder="ค้นหาสินค้า SKU หรือหมวดหมู่" /></label><button className="filter-button"><SlidersHorizontal size={16} /> ตัวกรอง</button></div><div className="table-scroll"><table><thead><tr><th>สินค้า</th><th>หมวดหมู่</th><th>ราคาขาย</th><th>คงเหลือ</th><th>สถานะ</th>{canManageProducts&&<th>จัดการ</th>}</tr></thead><tbody>{inventoryProducts.map(p=><tr key={p.id}><td><div className="product-cell"><span style={{background:p.color}}><Hammer size={18}/></span><div><strong>{p.name}</strong><small>{p.sku} · ต่อ{p.unit}</small></div></div></td><td>{p.category}</td><td><strong>฿{p.price.toLocaleString("th-TH")}</strong></td><td>{p.stock.toLocaleString("th-TH")} {p.unit}</td><td><span className={`status-chip ${p.stock <= settings.lowStockThreshold ? "warning":"success"}`}>{p.stock <= settings.lowStockThreshold ? "ใกล้หมด":"พร้อมขาย"}</span></td>{canManageProducts&&<td><div className="row-actions"><button className="icon-button" aria-label="แก้ไข"><Pencil size={15}/></button><button className="icon-button danger-button" aria-label="ลบ" onClick={()=>removeProduct(p.id)}><Trash2 size={15}/></button></div></td>}</tr>)}</tbody></table></div></section>
         </div>}
 
         {activePage === "sales" && <div className="page-content">
@@ -157,6 +200,12 @@ export default function POSDashboard({ products, databaseConnected, initialSetti
           <div className="report-grid"><section className="data-panel chart-panel"><div className="panel-title"><div><h2>ยอดขายรายวัน</h2><p>ยอดขายรวม ฿486,250</p></div><div className="legend"><i/> ยอดขาย</div></div><div className="bar-chart">{[42,56,48,70,64,82,58,76,92,68,86].map((h,i)=><div key={i}><span style={{height:`${h}%`}}/><small>{i+1} ส.ค.</small></div>)}</div></section><section className="data-panel category-report"><div className="panel-title"><div><h2>ยอดขายตามหมวดหมู่</h2><p>5 อันดับแรก</p></div></div>{[["ปูนและซีเมนต์",38,"฿184,775"],["เหล็ก",26,"฿126,425"],["สีและเคมีภัณฑ์",16,"฿77,800"],["อิฐและบล็อก",12,"฿58,350"],["ประปา",8,"฿38,900"]].map(([name,pct,value])=><div className="category-stat" key={name as string}><div><strong>{name}</strong><span>{value}</span></div><div><i style={{width:`${pct}%`}}/></div><small>{pct}%</small></div>)}</section></div>
         </div>}
 
+        {activePage === "users" && currentUser.role === "admin" && <div className="page-content">
+          <div className="page-actions"><div><p>เพิ่มผู้ใช้ กำหนดบทบาท และระงับการเข้าใช้งาน</p></div><button className="primary-action" onClick={()=>{setActionError("");setShowUserForm(true)}}><UserCog size={17}/> เพิ่มผู้ใช้งาน</button></div>
+          <div className="metrics"><Metric label="ผู้ใช้ทั้งหมด" value={`${users.length} บัญชี`} note="รวมทุกบทบาท" icon={<UserCog/>}/><Metric label="กำลังใช้งาน" value={`${users.filter(u=>u.isActive).length} บัญชี`} note="สามารถเข้าสู่ระบบได้" icon={<Wifi/>} tone="green"/><Metric label="ผู้ดูแลและผู้จัดการ" value={`${users.filter(u=>u.role==="admin"||u.role==="manager").length} บัญชี`} note="เข้าถึงรายงานและตั้งค่า" icon={<Settings/>} tone="blue"/><Metric label="คลังและพนักงานขาย" value={`${users.filter(u=>u.role==="warehouse"||u.role==="user").length} บัญชี`} note="สิทธิ์ตามหน้าที่" icon={<CircleUserRound/>} tone="orange"/></div>
+          <section className="data-panel"><div className="panel-toolbar"><label className="table-search"><Search size={17}/><input placeholder="ค้นหาชื่อหรือชื่อผู้ใช้"/></label></div><div className="table-scroll"><table><thead><tr><th>ผู้ใช้งาน</th><th>ชื่อผู้ใช้</th><th>บทบาท</th><th>เข้าใช้ล่าสุด</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>{users.map(user=><tr key={user.id}><td><div className="user-cell"><CircleUserRound/><strong>{user.displayName}</strong></div></td><td>@{user.username}</td><td><span className={`role-chip role-${user.role}`}>{roleLabels[user.role]}</span></td><td>{user.lastLoginAt?new Date(user.lastLoginAt).toLocaleString("th-TH",{dateStyle:"short",timeStyle:"short"}):"ยังไม่เคยเข้าใช้"}</td><td><span className={`status-chip ${user.isActive?"success":"danger"}`}>{user.isActive?"ใช้งาน":"ระงับ"}</span></td><td><div className="row-actions"><button className="table-action" onClick={()=>resetUserPassword(user)}>ตั้งรหัสผ่าน</button><button className="table-action" disabled={user.id===currentUser.id} onClick={()=>toggleUser(user)}>{user.isActive?"ระงับบัญชี":"เปิดใช้งาน"}</button></div></td></tr>)}</tbody></table></div></section>
+        </div>}
+
         {activePage === "settings" && <div className="page-content settings-page">
           <div className="page-actions"><div><p>กำหนดข้อมูลร้าน การขาย ใบเสร็จ และสต็อก</p></div>{saveState === "saved" && <span className="save-message success"><Check size={15}/> บันทึกเรียบร้อย</span>}{saveState === "error" && <span className="save-message error">บันทึกไม่สำเร็จ</span>}<button className="outline-action" onClick={()=>{setSettings(savedSettings);setSaveState("idle")}}><RotateCcw size={17}/> คืนค่าเดิม</button><button className="primary-action" onClick={saveSettings} disabled={saveState==="saving"}><Save size={17}/> {saveState==="saving"?"กำลังบันทึก...":"บันทึกการตั้งค่า"}</button></div>
           <div className="settings-layout"><nav className="settings-nav" aria-label="หมวดการตั้งค่า">
@@ -164,13 +213,19 @@ export default function POSDashboard({ products, databaseConnected, initialSetti
             <button className={settingsSection === "sales" ? "active" : ""} onClick={() => setSettingsSection("sales")}><ReceiptText size={17}/> การขายและภาษี</button>
             <button className={settingsSection === "receipt" ? "active" : ""} onClick={() => setSettingsSection("receipt")}><Printer size={17}/> ใบเสร็จ</button>
             <button className={settingsSection === "inventory" ? "active" : ""} onClick={() => setSettingsSection("inventory")}><Boxes size={17}/> สินค้าและสต็อก</button>
+            {currentUser.role === "admin" && <button className={settingsSection === "users" ? "active" : ""} onClick={() => setSettingsSection("users")}><UserCog size={17}/> จัดการผู้ใช้งาน</button>}
           </nav><div className="settings-forms">
             {settingsSection === "store" && <section className="settings-card"><div className="settings-card-title"><span><Building2/></span><div><h2>ข้อมูลร้านค้า</h2><p>ข้อมูลนี้จะแสดงบนหัวใบเสร็จและเอกสารทุกฉบับ</p></div></div><div className="form-grid"><label className="span-2">ชื่อร้าน <em>*</em><input required value={settings.storeName} onChange={e=>setSettings({...settings,storeName:e.target.value})}/><small>ชื่อที่ลูกค้ารู้จักหรือชื่อทางการค้า</small></label><label>เลขประจำตัวผู้เสียภาษี<input inputMode="numeric" value={settings.taxId} onChange={e=>setSettings({...settings,taxId:e.target.value.replace(/\D/g,"")})}/></label><label>เบอร์โทรศัพท์<input type="tel" value={settings.phone} onChange={e=>setSettings({...settings,phone:e.target.value})}/></label><label className="span-2">ที่อยู่ร้าน<textarea rows={4} value={settings.address} onChange={e=>setSettings({...settings,address:e.target.value})}/></label></div><div className="setting-preview"><Store size={22}/><div><small>ตัวอย่างชื่อร้านบนระบบ</small><strong>{settings.storeName || "กรุณาระบุชื่อร้าน"}</strong><span>{settings.phone} · เลขผู้เสียภาษี {settings.taxId}</span></div></div></section>}
             {settingsSection === "sales" && <section className="settings-card"><div className="settings-card-title"><span><SlidersHorizontal/></span><div><h2>การขายและภาษี</h2><p>กำหนดอัตราภาษีที่ใช้คำนวณยอดขาย</p></div></div><div className="form-grid"><label>ภาษีมูลค่าเพิ่ม (%)<input type="number" min="0" max="20" step="0.01" value={settings.vatRate} onChange={e=>setSettings({...settings,vatRate:Number(e.target.value)})}/><small>กำหนดได้ระหว่าง 0–20%</small></label><label>สกุลเงิน<select defaultValue="THB"><option value="THB">บาทไทย (THB)</option></select><small>สกุลเงินหลักของหน้าขายและรายงาน</small></label></div><div className="setting-preview calculation-preview"><div><span>ราคาสินค้า</span><strong>฿1,000.00</strong></div><div><span>ภาษีมูลค่าเพิ่ม {settings.vatRate}%</span><strong>฿{(1000 * settings.vatRate / 100).toLocaleString("th-TH",{minimumFractionDigits:2})}</strong></div><div><span>ยอดชำระตัวอย่าง</span><strong>฿{(1000 + 1000 * settings.vatRate / 100).toLocaleString("th-TH",{minimumFractionDigits:2})}</strong></div></div></section>}
             {settingsSection === "receipt" && <section className="settings-card"><div className="settings-card-title"><span><ReceiptText/></span><div><h2>ใบเสร็จรับเงิน</h2><p>รูปแบบเลขที่และพฤติกรรมหลังชำระเงิน</p></div></div><div className="form-grid"><label>คำนำหน้าเลขที่ใบเสร็จ<input value={settings.receiptPrefix} maxLength={12} onChange={e=>setSettings({...settings,receiptPrefix:e.target.value.replace(/[^a-zA-Z0-9-]/g,"").toUpperCase()})}/><small>ตัวอย่าง: {settings.receiptPrefix || "POS"}-000001</small></label><label className="switch-label"><div><strong>พิมพ์ใบเสร็จอัตโนมัติ</strong><small>สั่งพิมพ์ทันทีหลังรับชำระ</small></div><button type="button" role="switch" aria-checked={settings.autoPrint} className={`switch ${settings.autoPrint?"on":""}`} onClick={()=>setSettings({...settings,autoPrint:!settings.autoPrint})}><i/></button></label><label className="span-2">ข้อความท้ายใบเสร็จ<textarea rows={3} value={settings.receiptFooter} onChange={e=>setSettings({...settings,receiptFooter:e.target.value})}/><small>สูงสุด 300 ตัวอักษร</small></label></div><div className="receipt-preview"><small>{settings.storeName}</small><strong>{settings.receiptPrefix || "POS"}-000001</strong><span>{settings.receiptFooter || "ขอบคุณที่ใช้บริการ"}</span></div></section>}
             {settingsSection === "inventory" && <section className="settings-card"><div className="settings-card-title"><span><Boxes/></span><div><h2>สินค้าและสต็อก</h2><p>ตั้งค่าเกณฑ์การแจ้งเตือนสินค้าที่ใกล้หมด</p></div></div><div className="form-grid"><label>แจ้งเตือนเมื่อเหลือไม่เกิน<input type="number" min="0" max="9999" value={settings.lowStockThreshold} onChange={e=>setSettings({...settings,lowStockThreshold:Number(e.target.value)})}/><small>ระบบจะขึ้นป้าย “ใกล้หมด” และแสดงจำนวนบนกระดิ่งแจ้งเตือน</small></label><label>หน่วยเริ่มต้น<select defaultValue="piece"><option value="piece">ชิ้น</option><option value="bag">ถุง</option><option value="bar">เส้น</option></select><small>เลือกใหม่ได้ตอนเพิ่มสินค้าแต่ละรายการ</small></label></div><div className="inventory-preview"><div><Bell size={20}/><span><strong>{lowStock} รายการ</strong><small>มีสต็อกต่ำกว่าหรือเท่ากับ {settings.lowStockThreshold}</small></span></div>{products.filter(p=>p.stock<=settings.lowStockThreshold).slice(0,3).map(p=><div key={p.id}><span>{p.name}</span><strong>{p.stock} {p.unit}</strong></div>)}{lowStock===0&&<p>ไม่มีสินค้าที่ต่ำกว่าเกณฑ์นี้</p>}</div></section>}
+            {settingsSection === "users" && currentUser.role === "admin" && <section className="settings-card user-settings-card"><div className="settings-card-title"><span><UserCog/></span><div><h2>จัดการผู้ใช้งาน</h2><p>เพิ่มผู้ใช้ กำหนดบทบาท ตั้งรหัสผ่าน และระงับการเข้าใช้งาน</p></div><button className="primary-action user-add-button" onClick={()=>{setActionError("");setShowUserForm(true)}}><Plus size={16}/> เพิ่มผู้ใช้</button></div><div className="user-summary"><span><strong>{users.length}</strong> บัญชีทั้งหมด</span><span><strong>{users.filter(u=>u.isActive).length}</strong> กำลังใช้งาน</span><span><strong>{users.filter(u=>!u.isActive).length}</strong> ถูกระงับ</span></div><div className="table-scroll"><table><thead><tr><th>ผู้ใช้งาน</th><th>ชื่อผู้ใช้</th><th>บทบาท</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>{users.map(user=><tr key={user.id}><td><div className="user-cell"><CircleUserRound/><strong>{user.displayName}</strong></div></td><td>@{user.username}</td><td><span className={`role-chip role-${user.role}`}>{roleLabels[user.role]}</span></td><td><span className={`status-chip ${user.isActive?"success":"danger"}`}>{user.isActive?"ใช้งาน":"ระงับ"}</span></td><td><div className="row-actions"><button className="table-action" onClick={()=>resetUserPassword(user)}>ตั้งรหัสผ่าน</button><button className="table-action" disabled={user.id===currentUser.id} onClick={()=>toggleUser(user)}>{user.isActive?"ระงับบัญชี":"เปิดใช้งาน"}</button></div></td></tr>)}</tbody></table></div></section>}
           </div></div>
         </div>}
+
+        {showProductForm && <div className="modal-backdrop" role="presentation" onMouseDown={()=>setShowProductForm(false)}><form className="app-modal" onSubmit={addProduct} onMouseDown={e=>e.stopPropagation()}><div className="modal-title"><div><h2>เพิ่มสินค้าใหม่</h2><p>บันทึกสินค้าเข้าสู่คลังและหน้าขาย</p></div><button type="button" onClick={()=>setShowProductForm(false)}><X/></button></div>{actionError&&<div className="login-error">{actionError}</div>}<div className="form-grid"><label>รหัส SKU<input required value={productDraft.sku} onChange={e=>setProductDraft({...productDraft,sku:e.target.value})}/></label><label>ชื่อสินค้า<input required value={productDraft.name} onChange={e=>setProductDraft({...productDraft,name:e.target.value})}/></label><label>หมวดหมู่<select value={productDraft.category} onChange={e=>setProductDraft({...productDraft,category:e.target.value})}>{categories.slice(1).map(c=><option key={c}>{c}</option>)}</select></label><label>หน่วย<input required value={productDraft.unit} onChange={e=>setProductDraft({...productDraft,unit:e.target.value})}/></label><label>ราคาขาย<input required type="number" min="0" step="0.01" value={productDraft.price} onChange={e=>setProductDraft({...productDraft,price:Number(e.target.value)})}/></label><label>จำนวนเริ่มต้น<input required type="number" min="0" value={productDraft.stock} onChange={e=>setProductDraft({...productDraft,stock:Number(e.target.value)})}/></label></div><div className="modal-actions"><button type="button" className="outline-action" onClick={()=>setShowProductForm(false)}>ยกเลิก</button><button className="primary-action"><Save size={16}/> บันทึกสินค้า</button></div></form></div>}
+
+        {showUserForm && <div className="modal-backdrop" role="presentation" onMouseDown={()=>setShowUserForm(false)}><form className="app-modal" onSubmit={addUser} onMouseDown={e=>e.stopPropagation()}><div className="modal-title"><div><h2>เพิ่มผู้ใช้งาน</h2><p>กำหนดบัญชีและสิทธิ์การเข้าใช้งาน</p></div><button type="button" onClick={()=>setShowUserForm(false)}><X/></button></div>{actionError&&<div className="login-error">{actionError}</div>}<div className="form-grid"><label>ชื่อ-นามสกุล<input required value={userDraft.displayName} onChange={e=>setUserDraft({...userDraft,displayName:e.target.value})}/></label><label>ชื่อผู้ใช้<input required minLength={3} pattern="[a-zA-Z0-9._-]+" value={userDraft.username} onChange={e=>setUserDraft({...userDraft,username:e.target.value})}/></label><label>รหัสผ่านเริ่มต้น<input required type="password" minLength={8} value={userDraft.password} onChange={e=>setUserDraft({...userDraft,password:e.target.value})}/><small>อย่างน้อย 8 ตัวอักษร</small></label><label>บทบาท<select value={userDraft.role} onChange={e=>setUserDraft({...userDraft,role:e.target.value as UserRole})}><option value="admin">ผู้ดูแลระบบ</option><option value="manager">ผู้จัดการ</option><option value="warehouse">เจ้าหน้าที่คลัง</option><option value="user">พนักงานขาย</option></select></label></div><div className="permission-note"><strong>สิทธิ์ของบทบาทนี้</strong><span>{userDraft.role==="admin"?"ใช้งานได้ทุกเมนู รวมถึงจัดการผู้ใช้":userDraft.role==="manager"?"ใช้งานได้ทุกเมนู ยกเว้นจัดการผู้ใช้":userDraft.role==="warehouse"?"ขายหน้าร้านและจัดการสินค้าในคลัง":"ขายหน้าร้านและดูรายการสินค้า"}</span></div><div className="modal-actions"><button type="button" className="outline-action" onClick={()=>setShowUserForm(false)}>ยกเลิก</button><button className="primary-action"><Save size={16}/> เพิ่มผู้ใช้งาน</button></div></form></div>}
       </section>
     </main>
   );
