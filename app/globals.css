@@ -39,6 +39,7 @@ button { cursor: pointer; }
 .sidebar-bottom { margin-top: auto; padding-top: 10px; border-top: 1px solid #ffffff12; }
 .sidebar-toggle { color: #6f8a94; }
 .logout-item:hover { color: #ffc0a5; background: #ef744019; }
+.logout-form { margin: 0; width: 100%; }
 .workspace { min-width: 0; width: 100%; padding-left: 220px; transition: padding-left .25s ease; }
 .sidebar-is-collapsed .sidebar { width: 78px; padding-left: 13px; padding-right: 13px; }
 .sidebar-is-collapsed .workspace { padding-left: 78px; }

@@ -101,7 +101,6 @@ export default function POSDashboard({ products, databaseConnected, initialSetti
       window.setTimeout(() => setSaveState("idle"), 2200);
     } catch { setSaveState("error"); }
   }
-  async function logout() { await fetch("/api/auth/logout", { method: "POST" }); window.location.href = "/login"; }
   async function addProduct(event: React.FormEvent) {
     event.preventDefault(); setActionError("");
     const response = await fetch("/api/products", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(productDraft) });
@@ -144,7 +143,7 @@ export default function POSDashboard({ products, databaseConnected, initialSetti
         <nav aria-label="เมนูหลัก">{navItems.map((item) => <button key={item.key} title={sidebarExpanded ? undefined : item.label} className={`nav-item ${activePage === item.key ? "active" : ""}`} aria-label={item.label} onClick={() => setActivePage(item.key)}>{item.icon}<span>{item.label}</span></button>)}</nav>
         <div className="sidebar-bottom">
           {canAccess(currentUser.role,"manage_settings") && <button title={sidebarExpanded ? undefined : "ตั้งค่าระบบ"} className={`nav-item ${activePage === "settings" ? "active" : ""}`} aria-label="ตั้งค่าระบบ" onClick={() => setActivePage("settings")}><Settings /><span>ตั้งค่าระบบ</span></button>}
-          <button title={sidebarExpanded ? undefined : "ออกจากระบบ"} className="nav-item logout-item" aria-label="ออกจากระบบ" onClick={logout}><LogOut/><span>ออกจากระบบ</span></button>
+          <form className="logout-form" action="/api/auth/logout" method="post"><button type="submit" title={sidebarExpanded ? undefined : "ออกจากระบบ"} className="nav-item logout-item" aria-label="ออกจากระบบ"><LogOut/><span>ออกจากระบบ</span></button></form>
           <button className="nav-item sidebar-toggle" aria-label={sidebarExpanded ? "ย่อแถบเมนู" : "ขยายแถบเมนู"} aria-expanded={sidebarExpanded} onClick={() => setSidebarExpanded((value) => !value)}>{sidebarExpanded ? <PanelLeftClose /> : <PanelLeftOpen />}<span>ย่อแถบเมนู</span></button>
         </div>
       </aside>
