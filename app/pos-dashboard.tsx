@@ -13,7 +13,7 @@ import type { CurrentUser } from "@/lib/auth";
 import { canAccess, roleLabels, type UserRole } from "@/lib/roles";
 
 type CartItem = Product & { qty: number };
-type PageKey = "pos" | "products" | "sales" | "delivery" | "reports" | "settings" | "users";
+type PageKey = "pos" | "products" | "sales" | "delivery" | "customers" | "reports" | "settings" | "users";
 type SettingsSection = "store" | "sales" | "receipt" | "inventory" | "categories" | "users";
 type Props = { products: Product[]; categories: ProductCategory[]; databaseConnected: boolean; initialSettings: StoreSettings; currentUser: CurrentUser };
 type ManagedUser = { id: number; username: string; displayName: string; role: UserRole; isActive: number; lastLoginAt: string | null };
@@ -36,7 +36,7 @@ type ReceiptData = {
   items: ReceiptItem[];
 };
 
-const pageNames: Record<PageKey, string> = { pos: "ขายหน้าร้าน", products: "สินค้าและสต็อก", sales: "รายการขาย", delivery: "งานจัดส่ง", reports: "รายงานภาพรวม", settings: "ตั้งค่าระบบ", users: "จัดการผู้ใช้งาน" };
+const pageNames: Record<PageKey, string> = { pos: "ขายหน้าร้าน", products: "สินค้าและสต็อก", sales: "รายการขาย", delivery: "งานจัดส่ง", customers: "ลูกค้า", reports: "รายงานภาพรวม", settings: "ตั้งค่าระบบ", users: "จัดการผู้ใช้งาน" };
 const sales = [
   { no: "POS-0826", time: "14:32", customer: "ลูกค้าทั่วไป", items: 3, payment: "เงินสด", total: 1856.35, status: "สำเร็จ" },
   { no: "POS-0825", time: "13:48", customer: "หจก. รุ่งเรืองก่อสร้าง", items: 12, payment: "โอน / QR", total: 12840, status: "สำเร็จ" },
@@ -49,6 +49,12 @@ const deliveries = [
   { no: "DLV-0063", customer: "บจก. เอส.พี.โฮม", area: "ลาดกระบัง กทม.", time: "11:00–13:00", truck: "2ฒข 7109", status: "เตรียมสินค้า", tone: "orange" },
   { no: "DLV-0064", customer: "คุณชาญชัย", area: "บางพลี สมุทรปราการ", time: "13:00–15:00", truck: "1ฒก 4582", status: "รอจัดคิว", tone: "gray" },
   { no: "DLV-0061", customer: "ร้านช่างเอก", area: "สะพานสูง กทม.", time: "08:30", truck: "2ฒข 7109", status: "ส่งสำเร็จ", tone: "green" },
+];
+const customers = [
+  { name: "หจก. รุ่งเรืองก่อสร้าง", phone: "081-234-5566", type: "ลูกค้าประจำ", orders: 18, total: 184775, lastOrder: "วันนี้ 13:48" },
+  { name: "บจก. เอส.พี.โฮม", phone: "089-772-1900", type: "ผู้รับเหมา", orders: 11, total: 126425, lastOrder: "วันนี้ 10:16" },
+  { name: "คุณสมชาย ใจดี", phone: "086-555-2048", type: "ลูกค้าทั่วไป", orders: 5, total: 18650, lastOrder: "11 ส.ค. 2569" },
+  { name: "ร้านช่างเอก", phone: "082-448-6110", type: "ลูกค้าประจำ", orders: 9, total: 58350, lastOrder: "10 ส.ค. 2569" },
 ];
 
 function ProductArt({ icon }: { icon: string }) {
@@ -274,6 +280,7 @@ export default function POSDashboard({ products, categories: initialCategories, 
     { key: "products", label: "สินค้า", icon: <Boxes />, show: true },
     { key: "sales", label: "รายการขาย", icon: <ClipboardList />, show: canAccess(currentUser.role,"sales") },
     { key: "delivery", label: "จัดส่ง", icon: <Truck />, show: canAccess(currentUser.role,"delivery") },
+    { key: "customers", label: "ลูกค้า", icon: <CircleUserRound />, show: true },
     { key: "reports", label: "รายงาน", icon: <BarChart3 />, show: canAccess(currentUser.role,"reports") },
   ] satisfies { key: PageKey; label: string; icon: React.ReactNode; show: boolean }[]).filter((item)=>item.show);
 
@@ -332,6 +339,12 @@ export default function POSDashboard({ products, categories: initialCategories, 
           <div className="page-actions"><div><p>วางแผนคิวรถและติดตามสถานะการจัดส่ง</p></div><button className="outline-action"><MapPin size={17}/> ดูแผนที่</button><button className="primary-action"><Plus size={17}/> สร้างงานจัดส่ง</button></div>
           <div className="metrics"><Metric label="งานวันนี้" value="8 งาน" note="จัดส่งแล้ว 3 งาน" icon={<Truck/>}/><Metric label="กำลังจัดส่ง" value="2 คัน" note="รถพร้อมใช้งาน 1 คัน" icon={<MapPin/>} tone="blue"/><Metric label="รอจัดคิว" value="3 งาน" note="ต้องจัดก่อน 15:00" icon={<ClipboardList/>} tone="orange"/><Metric label="ตรงเวลา" value="96%" note="เฉลี่ย 42 นาที / งาน" icon={<PackageCheck/>} tone="green"/></div>
           <div className="delivery-layout"><section className="data-panel delivery-list"><div className="panel-title"><div><h2>คิวจัดส่งวันนี้</h2><p>วันอังคารที่ 11 สิงหาคม 2569</p></div><span>4 งาน</span></div>{deliveries.map((d,i)=><article className="delivery-card" key={d.no}><span className={`route-dot ${d.tone}`}>{i+1}</span><div className="delivery-main"><div><strong>{d.no} · {d.customer}</strong><span className={`status-chip ${d.tone}`}>{d.status}</span></div><p><MapPin size={14}/> {d.area} <span>•</span> {d.time}</p><small><Truck size={13}/> ทะเบียน {d.truck}</small></div><button className="icon-button"><ChevronDown size={16}/></button></article>)}</section><aside className="route-panel"><div className="map-mock"><MapPin size={32}/><strong>แผนที่เส้นทาง</strong><small>3 จุดส่ง · 42.8 กม.</small><div className="route-line"><i/><i/><i/></div></div><div className="driver-card"><CircleUserRound size={38}/><div><strong>คุณวิชัย ชำนาญทาง</strong><small>คนขับรถ · คันที่ 1</small><span><Phone size={12}/> 089-123-4567</span></div></div></aside></div>
+        </div>}
+
+        {activePage === "customers" && <div className="page-content">
+          <div className="page-actions"><div><p>จัดการข้อมูลลูกค้า ประวัติการซื้อ และช่องทางติดต่อ</p></div><button className="outline-action"><FileText size={17}/> ส่งออก Excel</button><button className="primary-action"><Plus size={17}/> เพิ่มลูกค้า</button></div>
+          <div className="metrics"><Metric label="ลูกค้าทั้งหมด" value={`${customers.length} ราย`} note="ข้อมูลตัวอย่างสำหรับระบบลูกค้า" icon={<CircleUserRound/>}/><Metric label="ลูกค้าประจำ" value={`${customers.filter(c=>c.type==="ลูกค้าประจำ").length} ราย`} note="ซื้อซ้ำต่อเนื่อง" icon={<Check/>} tone="green"/><Metric label="ยอดซื้อรวม" value={`฿${customers.reduce((s,c)=>s+c.total,0).toLocaleString("th-TH")}`} note="จากรายการตัวอย่าง" icon={<WalletCards/>} tone="blue"/><Metric label="ผู้รับเหมา" value={`${customers.filter(c=>c.type==="ผู้รับเหมา").length} ราย`} note="กลุ่มงานโครงการ" icon={<HardHat/>} tone="orange"/></div>
+          <section className="data-panel"><div className="panel-toolbar"><label className="table-search"><Search size={17}/><input placeholder="ค้นหาชื่อลูกค้า เบอร์โทร หรือประเภทลูกค้า"/></label><button className="filter-button"><SlidersHorizontal size={16}/> ตัวกรอง</button></div><div className="table-scroll"><table><thead><tr><th>ลูกค้า</th><th>เบอร์โทร</th><th>ประเภท</th><th>จำนวนบิล</th><th>ยอดซื้อรวม</th><th>ซื้อล่าสุด</th><th>จัดการ</th></tr></thead><tbody>{customers.map(customer=><tr key={customer.phone}><td><div className="user-cell"><CircleUserRound/><strong>{customer.name}</strong></div></td><td>{customer.phone}</td><td><span className="status-chip blue">{customer.type}</span></td><td>{customer.orders} บิล</td><td><strong>฿{customer.total.toLocaleString("th-TH")}</strong></td><td>{customer.lastOrder}</td><td><div className="row-actions"><button className="table-action">ดูประวัติ</button><button className="table-action">แก้ไข</button></div></td></tr>)}</tbody></table></div></section>
         </div>}
 
         {activePage === "reports" && <div className="page-content">
