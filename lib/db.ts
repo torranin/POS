@@ -24,6 +24,14 @@ export type StoreSettings = {
   businessHours: string;
   address: string;
   vatRate: number;
+  currency: string;
+  pricesIncludeVat: boolean;
+  taxInvoiceEnabled: boolean;
+  taxInvoicePrefix: string;
+  defaultPaymentMethod: "cash" | "qr" | "card";
+  allowDiscount: boolean;
+  maxDiscountPercent: number;
+  roundingMode: "none" | "whole";
   lowStockThreshold: number;
   receiptPrefix: string;
   receiptFooter: string;
@@ -42,6 +50,14 @@ export const defaultSettings: StoreSettings = {
   businessHours: "จันทร์–เสาร์ 07:30–18:00 น.",
   address: "99/9 ถนนร่มเกล้า กรุงเทพมหานคร 10520",
   vatRate: 7,
+  currency: "THB",
+  pricesIncludeVat: false,
+  taxInvoiceEnabled: true,
+  taxInvoicePrefix: "TAX",
+  defaultPaymentMethod: "cash",
+  allowDiscount: true,
+  maxDiscountPercent: 20,
+  roundingMode: "none",
   lowStockThreshold: 10,
   receiptPrefix: "POS",
   receiptFooter: "ขอบคุณที่ไว้วางใจบ้านช่าง",
@@ -98,6 +114,14 @@ export async function getSettings(): Promise<StoreSettings> {
     businessHours: values.business_hours ?? defaultSettings.businessHours,
     address: values.address ?? defaultSettings.address,
     vatRate: Number(values.vat_rate ?? defaultSettings.vatRate),
+    currency: values.currency ?? defaultSettings.currency,
+    pricesIncludeVat: (values.prices_include_vat ?? "0") === "1",
+    taxInvoiceEnabled: (values.tax_invoice_enabled ?? "1") === "1",
+    taxInvoicePrefix: values.tax_invoice_prefix ?? defaultSettings.taxInvoicePrefix,
+    defaultPaymentMethod: (["cash","qr","card"].includes(values.default_payment_method) ? values.default_payment_method : defaultSettings.defaultPaymentMethod) as StoreSettings["defaultPaymentMethod"],
+    allowDiscount: (values.allow_discount ?? "1") === "1",
+    maxDiscountPercent: Number(values.max_discount_percent ?? defaultSettings.maxDiscountPercent),
+    roundingMode: (values.rounding_mode === "whole" ? "whole" : "none"),
     lowStockThreshold: Number(values.low_stock_threshold ?? defaultSettings.lowStockThreshold),
     receiptPrefix: values.receipt_prefix ?? defaultSettings.receiptPrefix,
     receiptFooter: values.receipt_footer ?? defaultSettings.receiptFooter,

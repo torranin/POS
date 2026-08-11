@@ -17,6 +17,24 @@ type PageKey = "pos" | "products" | "sales" | "delivery" | "reports" | "settings
 type SettingsSection = "store" | "sales" | "receipt" | "inventory" | "users";
 type Props = { products: Product[]; databaseConnected: boolean; initialSettings: StoreSettings; currentUser: CurrentUser };
 type ManagedUser = { id: number; username: string; displayName: string; role: UserRole; isActive: number; lastLoginAt: string | null };
+type ReceiptItem = { productId: number; sku: string; name: string; unit: string; quantity: number; unitPrice: number; lineTotal: number };
+type ReceiptData = {
+  id: number;
+  receiptNo: string;
+  taxInvoiceNo: string;
+  customerName: string;
+  cashierName: string;
+  createdAt: string;
+  paymentMethod: StoreSettings["defaultPaymentMethod"];
+  paymentLabel: string;
+  subtotal: number;
+  discount: number;
+  vat: number;
+  rounding: number;
+  total: number;
+  settings: StoreSettings;
+  items: ReceiptItem[];
+};
 
 const categories = ["ทั้งหมด", "ปูนและซีเมนต์", "เหล็ก", "อิฐและบล็อก", "สีและเคมีภัณฑ์", "ประปา", "เครื่องมือช่าง"];
 const pageNames: Record<PageKey, string> = { pos: "ขายหน้าร้าน", products: "สินค้าและสต็อก", sales: "รายการขาย", delivery: "งานจัดส่ง", reports: "รายงานภาพรวม", settings: "ตั้งค่าระบบ", users: "จัดการผู้ใช้งาน" };
@@ -42,6 +60,10 @@ function Metric({ label, value, note, icon, tone = "navy" }: { label: string; va
   return <article className="metric-card"><span className={`metric-icon ${tone}`}>{icon}</span><div><p>{label}</p><strong>{value}</strong><small>{note}</small></div></article>;
 }
 
+function formatMoney(value: number) {
+  return `฿${value.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 export default function POSDashboard({ products, databaseConnected, initialSettings, currentUser }: Props) {
   const [activePage, setActivePage] = useState<PageKey>("pos");
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
@@ -51,6 +73,11 @@ export default function POSDashboard({ products, databaseConnected, initialSetti
   const [discount, setDiscount] = useState(50);
   const [settings, setSettings] = useState(initialSettings);
   const [savedSettings, setSavedSettings] = useState(initialSettings);
+  const [paymentMethod, setPaymentMethod] = useState<StoreSettings["defaultPaymentMethod"]>(initialSettings.defaultPaymentMethod);
+  const [customerName, setCustomerName] = useState("ลูกค้าทั่วไป");
+  const [receipt, setReceipt] = useState<ReceiptData | null>(null);
+  const [showReceipt, setShowReceipt] = useState(false);
+  const [checkoutState, setCheckoutState] = useState<"idle" | "saving" | "error">("idle");
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("store");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [inventoryProducts, setInventoryProducts] = useState(products);
@@ -66,15 +93,23 @@ export default function POSDashboard({ products, databaseConnected, initialSetti
     if (activePage === "settings" && settingsSection === "users" && currentUser.role === "admin") fetch("/api/users").then((r)=>r.json()).then(setUsers).catch(()=>setActionError("โหลดรายชื่อผู้ใช้ไม่สำเร็จ"));
   }, [activePage, settingsSection, currentUser.role]);
 
-  const filtered = useMemo(() => products.filter((p) => {
+  const filtered = useMemo(() => inventoryProducts.filter((p) => {
     const matchesCategory = category === "ทั้งหมด" || p.category === category;
     const term = query.trim().toLowerCase();
     return matchesCategory && (!term || p.name.toLowerCase().includes(term) || p.sku.toLowerCase().includes(term));
-  }), [products, query, category]);
+  }), [inventoryProducts, query, category]);
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
-  const vat = Math.max(0, subtotal - discount) * (settings.vatRate / 100);
-  const total = Math.max(0, subtotal - discount + vat);
-  const lowStock = products.filter((p) => p.stock <= settings.lowStockThreshold).length;
+  const maxDiscount = subtotal * (settings.maxDiscountPercent / 100);
+  const effectiveDiscount = settings.allowDiscount ? Math.min(discount, maxDiscount) : 0;
+  const taxableAmount = Math.max(0, subtotal - effectiveDiscount);
+  const vat = settings.vatRate > 0 ? (settings.pricesIncludeVat ? taxableAmount * settings.vatRate / (100 + settings.vatRate) : taxableAmount * (settings.vatRate / 100)) : 0;
+  const unroundedTotal = settings.pricesIncludeVat ? taxableAmount : taxableAmount + vat;
+  const total = settings.roundingMode === "whole" ? Math.round(unroundedTotal) : unroundedTotal;
+  const previewBase = 1000;
+  const previewVat = settings.vatRate > 0 ? (settings.pricesIncludeVat ? previewBase * settings.vatRate / (100 + settings.vatRate) : previewBase * (settings.vatRate / 100)) : 0;
+  const previewBeforeRounding = settings.pricesIncludeVat ? previewBase : previewBase + previewVat;
+  const previewTotal = settings.roundingMode === "whole" ? Math.round(previewBeforeRounding) : previewBeforeRounding;
+  const lowStock = inventoryProducts.filter((p) => p.stock <= settings.lowStockThreshold).length;
 
   function addToCart(product: Product) {
     setCart((current) => {
@@ -85,9 +120,42 @@ export default function POSDashboard({ products, databaseConnected, initialSetti
   function changeQty(id: number, amount: number) {
     setCart((current) => current.map((item) => item.id === id ? { ...item, qty: Math.max(0, Math.min(item.stock, item.qty + amount)) } : item).filter((item) => item.qty > 0));
   }
+  async function checkout() {
+    if (!cart.length || checkoutState === "saving") return;
+    setActionError("");
+    setCheckoutState("saving");
+    try {
+      const response = await fetch("/api/sales", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerName,
+          paymentMethod,
+          discount: effectiveDiscount,
+          items: cart.map((item) => ({ productId: item.id, quantity: item.qty })),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "บันทึกใบเสร็จไม่สำเร็จ");
+      const soldItems = cart;
+      setReceipt(data.receipt);
+      setShowReceipt(true);
+      setCart([]);
+      setInventoryProducts((items) => items.map((product) => {
+        const sold = soldItems.find((item) => item.id === product.id);
+        return sold ? { ...product, stock: Math.max(0, product.stock - sold.qty) } : product;
+      }));
+      setCheckoutState("idle");
+      if (settings.autoPrint) window.setTimeout(() => window.print(), 350);
+    } catch (error) {
+      setCheckoutState("error");
+      setActionError(error instanceof Error ? error.message : "บันทึกใบเสร็จไม่สำเร็จ");
+    }
+  }
   async function saveSettings() {
     const emailValid = !settings.email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(settings.email);
-    if (!settings.storeName.trim() || (settings.taxId && settings.taxId.length !== 13) || !emailValid || settings.vatRate < 0 || settings.vatRate > 20 || settings.lowStockThreshold < 0) {
+    const taxPrefixValid = !settings.taxInvoiceEnabled || settings.taxInvoicePrefix.trim().length > 0;
+    if (!settings.storeName.trim() || (settings.taxId && settings.taxId.length !== 13) || !emailValid || settings.vatRate < 0 || settings.vatRate > 20 || settings.lowStockThreshold < 0 || settings.maxDiscountPercent < 0 || settings.maxDiscountPercent > 100 || !taxPrefixValid) {
       setSaveState("error");
       return;
     }
@@ -98,6 +166,7 @@ export default function POSDashboard({ products, databaseConnected, initialSetti
       const data = await response.json();
       setSettings(data.settings);
       setSavedSettings(data.settings);
+      setPaymentMethod(data.settings.defaultPaymentMethod);
       setSaveState("saved");
       window.setTimeout(() => setSaveState("idle"), 2200);
     } catch { setSaveState("error"); }
@@ -169,10 +238,10 @@ export default function POSDashboard({ products, databaseConnected, initialSetti
           </section>
           <aside className="order-panel">
             <div className="order-header"><div><span className="order-icon"><ReceiptText size={19} /></span><div><small>รายการขาย</small><h2>ออเดอร์ #{settings.receiptPrefix}-0826</h2></div></div><button onClick={() => setCart([])} aria-label="ล้างรายการ"><Trash2 size={17} /></button></div>
-            <button className="customer-row"><span><CircleUserRound size={20} /> ลูกค้าทั่วไป</span><Plus size={17} /></button>
+            <button className="customer-row" onClick={() => { const name = window.prompt("ชื่อลูกค้าในใบเสร็จ", customerName); if (name !== null) setCustomerName(name.trim() || "ลูกค้าทั่วไป"); }}><span><CircleUserRound size={20} /> {customerName}</span><Plus size={17} /></button>
             <div className="cart-list">{cart.map((item) => <article className="cart-item" key={item.id}><div className="cart-thumb" style={{ background: item.color }}><Hammer size={20} /></div><div className="cart-detail"><h3>{item.name}</h3><small>{item.sku} · ฿{item.price.toLocaleString("th-TH")}/{item.unit}</small><div className="qty-control"><button onClick={() => changeQty(item.id, -1)}><Minus size={14} /></button><span>{item.qty}</span><button onClick={() => changeQty(item.id, 1)}><Plus size={14} /></button></div></div><strong>฿{(item.price * item.qty).toLocaleString("th-TH")}</strong></article>)}{cart.length === 0 && <div className="empty-cart"><ShoppingCart size={34} /><p>ยังไม่มีสินค้าในรายการ</p><small>เลือกสินค้าจากด้านซ้ายเพื่อเริ่มขาย</small></div>}</div>
-            <div className="summary"><div><span>ยอดรวม ({cart.reduce((s, i) => s + i.qty, 0)} ชิ้น)</span><strong>฿{subtotal.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div><div><span>ส่วนลด <button onClick={() => setDiscount(discount ? 0 : 50)}>แก้ไข</button></span><strong className="discount">-฿{discount.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div><div><span>ภาษีมูลค่าเพิ่ม {settings.vatRate}%</span><strong>฿{vat.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div><div className="grand-total"><span>ยอดชำระ</span><strong>฿{total.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div></div>
-            <div className="payment-types"><button className="active"><WalletCards size={18} /> เงินสด</button><button><CreditCard size={18} /> บัตร / QR</button></div><button className="checkout" disabled={!cart.length}><span>ชำระเงิน</span><strong>฿{total.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></button><div className="shortcut"><span><kbd>F8</kbd> พักบิล</span><span><kbd>F10</kbd> ชำระเงิน</span></div>
+            <div className="summary"><div><span>ยอดรวม ({cart.reduce((s, i) => s + i.qty, 0)} ชิ้น)</span><strong>฿{subtotal.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div><div><span>ส่วนลด {settings.allowDiscount && <button onClick={() => setDiscount(discount ? 0 : Math.min(50, maxDiscount))}>แก้ไข</button>}</span><strong className="discount">-฿{effectiveDiscount.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div><div><span>ภาษีมูลค่าเพิ่ม {settings.vatRate}% {settings.pricesIncludeVat ? "(รวมในราคา)" : ""}</span><strong>฿{vat.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div>{settings.roundingMode === "whole" && <div><span>ปัดเศษ</span><strong>฿{(total - unroundedTotal).toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div>}<div className="grand-total"><span>ยอดชำระ</span><strong>฿{total.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div></div>
+            <div className="payment-types"><button className={paymentMethod === "cash" ? "active" : ""} onClick={() => setPaymentMethod("cash")}><WalletCards size={18} /> เงินสด</button><button className={paymentMethod === "qr" ? "active" : ""} onClick={() => setPaymentMethod("qr")}><ReceiptText size={18} /> QR</button><button className={paymentMethod === "card" ? "active" : ""} onClick={() => setPaymentMethod("card")}><CreditCard size={18} /> บัตร</button></div>{checkoutState === "error" && <div className="checkout-error">{actionError}</div>}<button className="checkout" disabled={!cart.length || checkoutState === "saving"} onClick={checkout}><span>{checkoutState === "saving" ? "กำลังออกใบเสร็จ..." : settings.taxInvoiceEnabled ? `${settings.taxInvoicePrefix || "TAX"} / ชำระเงิน` : "ชำระเงิน"}</span><strong>฿{total.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></button><div className="shortcut"><span><kbd>F8</kbd> พักบิล</span><span><kbd>F10</kbd> ชำระเงิน</span></div>
           </aside>
         </div>}
 
@@ -233,11 +302,51 @@ export default function POSDashboard({ products, databaseConnected, initialSetti
               </div></div>
               <div className="store-profile-preview"><div className="store-preview-logo"><HardHat/></div><div><small>ตัวอย่างข้อมูลร้าน</small><h3>{settings.storeName || "กรุณาระบุชื่อร้าน"}</h3><strong>{settings.legalName} · {settings.branchName} ({settings.branchCode})</strong><p>{settings.address}</p><span>{settings.phone} · {settings.email} · LINE {settings.lineId}</span><em>{settings.businessHours}</em></div></div>
             </section>}
-            {settingsSection === "sales" && <section className="settings-card"><div className="settings-card-title"><span><SlidersHorizontal/></span><div><h2>การขายและภาษี</h2><p>กำหนดอัตราภาษีที่ใช้คำนวณยอดขาย</p></div></div><div className="form-grid"><label>ภาษีมูลค่าเพิ่ม (%)<input type="number" min="0" max="20" step="0.01" value={settings.vatRate} onChange={e=>setSettings({...settings,vatRate:Number(e.target.value)})}/><small>กำหนดได้ระหว่าง 0–20%</small></label><label>สกุลเงิน<select defaultValue="THB"><option value="THB">บาทไทย (THB)</option></select><small>สกุลเงินหลักของหน้าขายและรายงาน</small></label></div><div className="setting-preview calculation-preview"><div><span>ราคาสินค้า</span><strong>฿1,000.00</strong></div><div><span>ภาษีมูลค่าเพิ่ม {settings.vatRate}%</span><strong>฿{(1000 * settings.vatRate / 100).toLocaleString("th-TH",{minimumFractionDigits:2})}</strong></div><div><span>ยอดชำระตัวอย่าง</span><strong>฿{(1000 + 1000 * settings.vatRate / 100).toLocaleString("th-TH",{minimumFractionDigits:2})}</strong></div></div></section>}
+            {settingsSection === "sales" && <section className="settings-card sales-tax-card">
+              <div className="settings-card-title"><span><SlidersHorizontal/></span><div><h2>การขายและภาษี</h2><p>กำหนดวิธีคิดภาษี ใบกำกับภาษี การรับชำระ และส่วนลดหน้าร้าน</p></div></div>
+              <div className="sales-setting-group"><h3>ภาษีและราคา</h3><div className="form-grid">
+                <label>ภาษีมูลค่าเพิ่ม (%)<input type="number" min="0" max="20" step="0.01" value={settings.vatRate} onChange={e=>setSettings({...settings,vatRate:Number(e.target.value)})}/><small>กำหนดได้ระหว่าง 0–20%</small></label>
+                <label>สกุลเงิน<select value={settings.currency} onChange={e=>setSettings({...settings,currency:e.target.value})}><option value="THB">บาทไทย (THB)</option></select><small>ใช้กับหน้าขาย ใบเสร็จ และรายงาน</small></label>
+                <label className="switch-label"><div><strong>ราคาสินค้ารวม VAT แล้ว</strong><small>เปิดเมื่อราคาขายบนสินค้าเป็นราคาที่รวมภาษีแล้ว</small></div><button type="button" role="switch" aria-checked={settings.pricesIncludeVat} className={`switch ${settings.pricesIncludeVat?"on":""}`} onClick={()=>setSettings({...settings,pricesIncludeVat:!settings.pricesIncludeVat})}><i/></button></label>
+                <label className="switch-label"><div><strong>เปิดใช้ใบกำกับภาษี</strong><small>แสดง prefix ใบกำกับภาษีในหน้าชำระเงิน</small></div><button type="button" role="switch" aria-checked={settings.taxInvoiceEnabled} className={`switch ${settings.taxInvoiceEnabled?"on":""}`} onClick={()=>setSettings({...settings,taxInvoiceEnabled:!settings.taxInvoiceEnabled})}><i/></button></label>
+                <label>คำนำหน้าใบกำกับภาษี<input disabled={!settings.taxInvoiceEnabled} value={settings.taxInvoicePrefix} maxLength={12} onChange={e=>setSettings({...settings,taxInvoicePrefix:e.target.value.replace(/[^a-zA-Z0-9-]/g,"").toUpperCase()})}/><small>ตัวอย่าง: {(settings.taxInvoicePrefix || "TAX")}-000001</small></label>
+              </div></div>
+              <div className="sales-setting-group"><h3>การขายหน้าร้าน</h3><div className="form-grid">
+                <label>วิธีชำระเงินเริ่มต้น<select value={settings.defaultPaymentMethod} onChange={e=>setSettings({...settings,defaultPaymentMethod:e.target.value as StoreSettings["defaultPaymentMethod"]})}><option value="cash">เงินสด</option><option value="qr">QR / โอนเงิน</option><option value="card">บัตรเครดิต/เดบิต</option></select><small>ใช้เป็นปุ่มที่ถูกเลือกไว้เมื่อเริ่มขาย</small></label>
+                <label>การปัดเศษยอดชำระ<select value={settings.roundingMode} onChange={e=>setSettings({...settings,roundingMode:e.target.value as StoreSettings["roundingMode"]})}><option value="none">ไม่ปัดเศษ</option><option value="whole">ปัดเป็นบาทเต็ม</option></select><small>เหมาะกับร้านที่รับเงินสดและต้องการยอดสุทธิเป็นบาทถ้วน</small></label>
+                <label className="switch-label"><div><strong>อนุญาตให้ให้ส่วนลด</strong><small>ปิดเพื่อซ่อน/ล็อกส่วนลดในหน้าขาย</small></div><button type="button" role="switch" aria-checked={settings.allowDiscount} className={`switch ${settings.allowDiscount?"on":""}`} onClick={()=>setSettings({...settings,allowDiscount:!settings.allowDiscount})}><i/></button></label>
+                <label>ส่วนลดสูงสุด (%)<input disabled={!settings.allowDiscount} type="number" min="0" max="100" step="0.01" value={settings.maxDiscountPercent} onChange={e=>setSettings({...settings,maxDiscountPercent:Number(e.target.value)})}/><small>จำกัดส่วนลดต่อบิลไม่เกินเปอร์เซ็นต์นี้</small></label>
+              </div></div>
+              <div className="setting-preview calculation-preview">
+                <div><span>ราคาสินค้าตัวอย่าง</span><strong>฿{previewBase.toLocaleString("th-TH",{minimumFractionDigits:2})}</strong></div>
+                <div><span>VAT {settings.vatRate}% {settings.pricesIncludeVat ? "(รวมในราคา)" : "(บวกเพิ่ม)"}</span><strong>฿{previewVat.toLocaleString("th-TH",{minimumFractionDigits:2})}</strong></div>
+                {settings.roundingMode === "whole" && <div><span>ปัดเศษ</span><strong>฿{(previewTotal - previewBeforeRounding).toLocaleString("th-TH",{minimumFractionDigits:2})}</strong></div>}
+                <div><span>ยอดชำระตัวอย่าง</span><strong>฿{previewTotal.toLocaleString("th-TH",{minimumFractionDigits:2})}</strong></div>
+              </div>
+            </section>}
             {settingsSection === "receipt" && <section className="settings-card"><div className="settings-card-title"><span><ReceiptText/></span><div><h2>ใบเสร็จรับเงิน</h2><p>รูปแบบเลขที่และพฤติกรรมหลังชำระเงิน</p></div></div><div className="form-grid"><label>คำนำหน้าเลขที่ใบเสร็จ<input value={settings.receiptPrefix} maxLength={12} onChange={e=>setSettings({...settings,receiptPrefix:e.target.value.replace(/[^a-zA-Z0-9-]/g,"").toUpperCase()})}/><small>ตัวอย่าง: {settings.receiptPrefix || "POS"}-000001</small></label><label className="switch-label"><div><strong>พิมพ์ใบเสร็จอัตโนมัติ</strong><small>สั่งพิมพ์ทันทีหลังรับชำระ</small></div><button type="button" role="switch" aria-checked={settings.autoPrint} className={`switch ${settings.autoPrint?"on":""}`} onClick={()=>setSettings({...settings,autoPrint:!settings.autoPrint})}><i/></button></label><label className="span-2">ข้อความท้ายใบเสร็จ<textarea rows={3} value={settings.receiptFooter} onChange={e=>setSettings({...settings,receiptFooter:e.target.value})}/><small>สูงสุด 300 ตัวอักษร</small></label></div><div className="receipt-preview"><small>{settings.storeName}</small><strong>{settings.receiptPrefix || "POS"}-000001</strong><span>{settings.receiptFooter || "ขอบคุณที่ใช้บริการ"}</span></div></section>}
             {settingsSection === "inventory" && <section className="settings-card"><div className="settings-card-title"><span><Boxes/></span><div><h2>สินค้าและสต็อก</h2><p>ตั้งค่าเกณฑ์การแจ้งเตือนสินค้าที่ใกล้หมด</p></div></div><div className="form-grid"><label>แจ้งเตือนเมื่อเหลือไม่เกิน<input type="number" min="0" max="9999" value={settings.lowStockThreshold} onChange={e=>setSettings({...settings,lowStockThreshold:Number(e.target.value)})}/><small>ระบบจะขึ้นป้าย “ใกล้หมด” และแสดงจำนวนบนกระดิ่งแจ้งเตือน</small></label><label>หน่วยเริ่มต้น<select defaultValue="piece"><option value="piece">ชิ้น</option><option value="bag">ถุง</option><option value="bar">เส้น</option></select><small>เลือกใหม่ได้ตอนเพิ่มสินค้าแต่ละรายการ</small></label></div><div className="inventory-preview"><div><Bell size={20}/><span><strong>{lowStock} รายการ</strong><small>มีสต็อกต่ำกว่าหรือเท่ากับ {settings.lowStockThreshold}</small></span></div>{products.filter(p=>p.stock<=settings.lowStockThreshold).slice(0,3).map(p=><div key={p.id}><span>{p.name}</span><strong>{p.stock} {p.unit}</strong></div>)}{lowStock===0&&<p>ไม่มีสินค้าที่ต่ำกว่าเกณฑ์นี้</p>}</div></section>}
             {settingsSection === "users" && currentUser.role === "admin" && <section className="settings-card user-settings-card"><div className="settings-card-title"><span><UserCog/></span><div><h2>จัดการผู้ใช้งาน</h2><p>เพิ่มผู้ใช้ กำหนดบทบาท ตั้งรหัสผ่าน และระงับการเข้าใช้งาน</p></div><button className="primary-action user-add-button" onClick={()=>{setActionError("");setShowUserForm(true)}}><Plus size={16}/> เพิ่มผู้ใช้</button></div><div className="user-summary"><span><strong>{users.length}</strong> บัญชีทั้งหมด</span><span><strong>{users.filter(u=>u.isActive).length}</strong> กำลังใช้งาน</span><span><strong>{users.filter(u=>!u.isActive).length}</strong> ถูกระงับ</span></div><div className="table-scroll"><table><thead><tr><th>ผู้ใช้งาน</th><th>ชื่อผู้ใช้</th><th>บทบาท</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>{users.map(user=><tr key={user.id}><td><div className="user-cell"><CircleUserRound/><strong>{user.displayName}</strong></div></td><td>@{user.username}</td><td><span className={`role-chip role-${user.role}`}>{roleLabels[user.role]}</span></td><td><span className={`status-chip ${user.isActive?"success":"danger"}`}>{user.isActive?"ใช้งาน":"ระงับ"}</span></td><td><div className="row-actions"><button className="table-action" onClick={()=>resetUserPassword(user)}>ตั้งรหัสผ่าน</button><button className="table-action" disabled={user.id===currentUser.id} onClick={()=>toggleUser(user)}>{user.isActive?"ระงับบัญชี":"เปิดใช้งาน"}</button></div></td></tr>)}</tbody></table></div></section>}
           </div></div>
+        </div>}
+
+        {showReceipt && receipt && <div className="modal-backdrop receipt-backdrop" role="presentation" onMouseDown={() => setShowReceipt(false)}>
+          <section className="app-modal receipt-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-title no-print"><div><h2>ใบเสร็จรับเงิน</h2><p>บันทึกการขายเรียบร้อยแล้ว สามารถพิมพ์หรือปิดเพื่อเริ่มบิลใหม่ได้</p></div><button type="button" onClick={() => setShowReceipt(false)}><X/></button></div>
+            <div className="thermal-receipt">
+              <div className="receipt-brand"><span><HardHat size={22}/></span><strong>{receipt.settings.storeName}</strong><small>{receipt.settings.legalName}</small></div>
+              <div className="receipt-store-info"><span>{receipt.settings.address}</span><span>โทร {receipt.settings.phone} · LINE {receipt.settings.lineId}</span>{receipt.settings.taxId && <span>เลขประจำตัวผู้เสียภาษี {receipt.settings.taxId} สาขา {receipt.settings.branchCode}</span>}</div>
+              <div className="receipt-divider"/>
+              <div className="receipt-doc-title"><strong>{receipt.settings.taxInvoiceEnabled ? "ใบเสร็จรับเงิน / ใบกำกับภาษีอย่างย่อ" : "ใบเสร็จรับเงิน"}</strong><span>{receipt.receiptNo}</span>{receipt.taxInvoiceNo && <small>{receipt.taxInvoiceNo}</small>}</div>
+              <div className="receipt-meta"><span>วันที่</span><strong>{new Date(receipt.createdAt).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" })}</strong><span>ลูกค้า</span><strong>{receipt.customerName}</strong><span>พนักงาน</span><strong>{receipt.cashierName}</strong><span>ชำระโดย</span><strong>{receipt.paymentLabel}</strong></div>
+              <div className="receipt-divider"/>
+              <div className="receipt-items">{receipt.items.map((item) => <div key={`${receipt.id}-${item.productId}`}><span><strong>{item.name}</strong><small>{item.sku} · {item.quantity} {item.unit} x {formatMoney(item.unitPrice)}</small></span><b>{formatMoney(item.lineTotal)}</b></div>)}</div>
+              <div className="receipt-divider"/>
+              <div className="receipt-totals"><div><span>ยอดรวมสินค้า</span><strong>{formatMoney(receipt.subtotal)}</strong></div><div><span>ส่วนลด</span><strong>-{formatMoney(receipt.discount)}</strong></div><div><span>VAT {receipt.settings.vatRate}% {receipt.settings.pricesIncludeVat ? "(รวมในราคา)" : ""}</span><strong>{formatMoney(receipt.vat)}</strong></div>{Math.abs(receipt.rounding) >= 0.01 && <div><span>ปัดเศษ</span><strong>{formatMoney(receipt.rounding)}</strong></div>}<div className="receipt-grand-total"><span>ยอดชำระสุทธิ</span><strong>{formatMoney(receipt.total)}</strong></div></div>
+              <div className="receipt-footer">{receipt.settings.receiptFooter || "ขอบคุณที่ใช้บริการ"}</div>
+            </div>
+            <div className="modal-actions receipt-actions no-print"><button type="button" className="outline-action" onClick={() => window.print()}><Printer size={16}/> พิมพ์ใบเสร็จ</button><button type="button" className="primary-action" onClick={() => { setShowReceipt(false); setReceipt(null); setCustomerName("ลูกค้าทั่วไป"); }}><Plus size={16}/> เปิดบิลใหม่</button></div>
+          </section>
         </div>}
 
         {showProductForm && <div className="modal-backdrop" role="presentation" onMouseDown={()=>setShowProductForm(false)}><form className="app-modal" onSubmit={addProduct} onMouseDown={e=>e.stopPropagation()}><div className="modal-title"><div><h2>เพิ่มสินค้าใหม่</h2><p>บันทึกสินค้าเข้าสู่คลังและหน้าขาย</p></div><button type="button" onClick={()=>setShowProductForm(false)}><X/></button></div>{actionError&&<div className="login-error">{actionError}</div>}<div className="form-grid"><label>รหัส SKU<input required value={productDraft.sku} onChange={e=>setProductDraft({...productDraft,sku:e.target.value})}/></label><label>ชื่อสินค้า<input required value={productDraft.name} onChange={e=>setProductDraft({...productDraft,name:e.target.value})}/></label><label>หมวดหมู่<select value={productDraft.category} onChange={e=>setProductDraft({...productDraft,category:e.target.value})}>{categories.slice(1).map(c=><option key={c}>{c}</option>)}</select></label><label>หน่วย<input required value={productDraft.unit} onChange={e=>setProductDraft({...productDraft,unit:e.target.value})}/></label><label>ราคาขาย<input required type="number" min="0" step="0.01" value={productDraft.price} onChange={e=>setProductDraft({...productDraft,price:Number(e.target.value)})}/></label><label>จำนวนเริ่มต้น<input required type="number" min="0" value={productDraft.stock} onChange={e=>setProductDraft({...productDraft,stock:Number(e.target.value)})}/></label></div><div className="modal-actions"><button type="button" className="outline-action" onClick={()=>setShowProductForm(false)}>ยกเลิก</button><button className="primary-action"><Save size={16}/> บันทึกสินค้า</button></div></form></div>}
