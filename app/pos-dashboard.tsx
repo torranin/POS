@@ -14,7 +14,7 @@ import { canAccess, roleLabels, type UserRole } from "@/lib/roles";
 
 type CartItem = Product & { qty: number };
 type PageKey = "pos" | "products" | "sales" | "delivery" | "customers" | "reports" | "settings" | "users";
-type SettingsSection = "store" | "sales" | "receipt" | "inventory" | "categories" | "users";
+type SettingsSection = "store" | "sales" | "receipt" | "inventory" | "categories" | "audit" | "users";
 type Props = { products: Product[]; categories: ProductCategory[]; databaseConnected: boolean; initialSettings: StoreSettings; currentUser: CurrentUser };
 type ManagedUser = { id: number; username: string; displayName: string; role: UserRole; isActive: number; lastLoginAt: string | null };
 type ReceiptItem = { productId: number; sku: string; name: string; unit: string; quantity: number; unitPrice: number; lineTotal: number };
@@ -58,6 +58,7 @@ type SaleRecord = {
   status: "completed" | "voided" | "refunded";
 };
 type SalesSummary = { totalSales: number; billCount: number; averagePerBill: number; cashTotal: number };
+type AuditLog = { id: number; action: string; detail: string; module: string; actor: string; role: string; createdAt: string; severity: "info" | "success" | "warning" | "danger" };
 type CustomerRecord = {
   id: number;
   name: string;
@@ -173,6 +174,9 @@ export default function POSDashboard({ products, categories: initialCategories, 
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([
+    { id: 1, action: "เข้าสู่ระบบ", detail: `${currentUser.displayName} เปิดใช้งานระบบ POS`, module: "ระบบ", actor: currentUser.displayName, role: roleLabels[currentUser.role], createdAt: new Date().toISOString(), severity: "success" },
+  ]);
   const [saleRecords, setSaleRecords] = useState<SaleRecord[]>([]);
   const [salesSummary, setSalesSummary] = useState<SalesSummary>({ totalSales: 0, billCount: 0, averagePerBill: 0, cashTotal: 0 });
   const [salesPeriod, setSalesPeriod] = useState<"today" | "7days" | "month">("today");
@@ -381,6 +385,9 @@ export default function POSDashboard({ products, categories: initialCategories, 
   const urgentStockNotifications = lowStockProducts.slice(0, 5);
   const deliveryNotifications = activeDeliveries.slice(0, 5);
   const notificationCount = lowStock + activeDeliveries.length;
+  const auditTodayCount = auditLogs.filter((log) => new Date(log.createdAt).toDateString() === new Date().toDateString()).length;
+  const auditDangerCount = auditLogs.filter((log) => log.severity === "danger" || log.severity === "warning").length;
+  const latestAuditLogs = auditLogs.slice(0, 12);
 
   function addToCart(product: Product) {
     if (product.stock <= 0) {
@@ -395,6 +402,44 @@ export default function POSDashboard({ products, categories: initialCategories, 
   }
   function changeQty(id: number, amount: number) {
     setCart((current) => current.map((item) => item.id === id ? { ...item, qty: Math.max(0, Math.min(item.stock, item.qty + amount)) } : item).filter((item) => item.qty > 0));
+  }
+  function addAudit(action: string, detail: string, module: string, severity: AuditLog["severity"] = "info") {
+    setAuditLogs((logs) => [{
+      id: Date.now(),
+      action,
+      detail,
+      module,
+      actor: currentUser.displayName,
+      role: roleLabels[currentUser.role],
+      createdAt: new Date().toISOString(),
+      severity,
+    }, ...logs].slice(0, 200));
+  }
+  function downloadJson(filename: string, payload: unknown) {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+  function exportAuditLogs() {
+    downloadJson(`audit-log-${new Date().toISOString().slice(0, 10)}.json`, { exportedAt: new Date().toISOString(), store: settings.storeName, logs: auditLogs });
+    addAudit("ส่งออก Audit Log", `ดาวน์โหลดประวัติ ${auditLogs.length} รายการ`, "สำรองข้อมูล", "success");
+  }
+  function exportBackup() {
+    downloadJson(`pos-backup-${new Date().toISOString().slice(0, 10)}.json`, {
+      exportedAt: new Date().toISOString(),
+      storeSettings: settings,
+      products: inventoryProducts,
+      categories: categoryList,
+      customers: customerRecords,
+      deliveries: deliveryRecords,
+      visibleSales: saleRecords,
+      auditLogs,
+    });
+    addAudit("สำรองข้อมูล", "ดาวน์โหลดไฟล์สำรองข้อมูลระบบ POS", "สำรองข้อมูล", "success");
   }
   function editDiscount() {
     if (!settings.allowDiscount || !cart.length) return;
@@ -454,6 +499,7 @@ export default function POSDashboard({ products, categories: initialCategories, 
       }));
       setCheckoutState("idle");
       setSalesReloadKey((value) => value + 1);
+      addAudit("ขายสินค้า", `บันทึกบิล ${data.receipt.receiptNo} ลูกค้า ${customerName} ยอด ${formatMoney(data.receipt.total)}`, "ขายหน้าร้าน", "success");
       if (settings.autoPrint) window.setTimeout(() => window.print(), 350);
     } catch (error) {
       setCheckoutState("error");
@@ -488,6 +534,7 @@ export default function POSDashboard({ products, categories: initialCategories, 
       setSavedSettings(data.settings);
       setPaymentMethod(data.settings.defaultPaymentMethod);
       setSaveState("saved");
+      addAudit("บันทึกตั้งค่าระบบ", "แก้ไขข้อมูลร้าน/การขาย/ใบเสร็จ/สต็อก", "ตั้งค่าระบบ", "success");
       window.setTimeout(() => setSaveState("idle"), 2200);
     } catch { setSaveState("error"); }
   }
@@ -513,6 +560,7 @@ export default function POSDashboard({ products, categories: initialCategories, 
     setInventoryProducts((items)=>editingProductId ? items.map((item)=>item.id===editingProductId?data:item) : [...items,data]);
     setCart((items)=>items.map((item)=>item.id===data.id?{...item,...data,qty:Math.min(item.qty,data.stock)}:item).filter((item)=>item.qty>0));
     setShowProductForm(false); setEditingProductId(null); setProductDraft({ sku:"",name:"",category:categoryList[0]?.name ?? "",unit:"ชิ้น",price:0,stock:0 });
+    addAudit(editingProductId ? "แก้ไขสินค้า" : "เพิ่มสินค้า", `${data.sku} · ${data.name} คงเหลือ ${data.stock} ${data.unit}`, "สินค้าและสต็อก", editingProductId ? "info" : "success");
     await refreshCategories();
   }
   async function adjustProductStock(product: Product, amount: number) {
@@ -522,26 +570,29 @@ export default function POSDashboard({ products, categories: initialCategories, 
     const data = await response.json(); if (!response.ok) { setActionError(data.message); return; }
     setInventoryProducts((items)=>items.map((item)=>item.id===product.id?data:item));
     setCart((items)=>items.map((item)=>item.id===product.id?{...item,...data,qty:Math.min(item.qty,data.stock)}:item).filter((item)=>item.qty>0));
+    addAudit("ปรับสต็อก", `${product.sku} · ${product.name}: ${product.stock} → ${data.stock} ${product.unit}`, "สินค้าและสต็อก", data.stock <= settings.lowStockThreshold ? "warning" : "info");
   }
   async function removeProduct(id:number) {
     if (!window.confirm("ยืนยันการลบสินค้านี้ออกจากรายการขาย?")) return;
     const response = await fetch(`/api/products?id=${id}`,{method:"DELETE"});
-    if (response.ok) { setInventoryProducts((items)=>items.filter((p)=>p.id!==id)); setCart((items)=>items.filter((p)=>p.id!==id)); await refreshCategories(); }
+    if (response.ok) { const removed = inventoryProducts.find((product)=>product.id===id); setInventoryProducts((items)=>items.filter((p)=>p.id!==id)); setCart((items)=>items.filter((p)=>p.id!==id)); addAudit("ลบสินค้า", removed ? `${removed.sku} · ${removed.name}` : `รหัสสินค้า ${id}`, "สินค้าและสต็อก", "danger"); await refreshCategories(); }
   }
   async function addUser(event:React.FormEvent) {
     event.preventDefault(); setActionError("");
     const response=await fetch("/api/users",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(userDraft)}); const data=await response.json();
     if(!response.ok){setActionError(data.message);return} setShowUserForm(false); setUserDraft({username:"",displayName:"",password:"",role:"user"});
     const refreshed=await fetch("/api/users").then(r=>r.json()); setUsers(refreshed);
+    addAudit("เพิ่มผู้ใช้งาน", `${data.displayName || userDraft.displayName} (${roleLabels[userDraft.role]})`, "จัดการผู้ใช้งาน", "success");
   }
   async function toggleUser(user:ManagedUser) {
     const response=await fetch("/api/users",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:user.id,isActive:!user.isActive})});
-    if(response.ok)setUsers(items=>items.map(item=>item.id===user.id?{...item,isActive:item.isActive?0:1}:item));
+    if(response.ok){setUsers(items=>items.map(item=>item.id===user.id?{...item,isActive:item.isActive?0:1}:item)); addAudit(user.isActive ? "ระงับผู้ใช้งาน" : "เปิดใช้งานผู้ใช้", user.displayName, "จัดการผู้ใช้งาน", user.isActive ? "warning" : "success");}
   }
   async function resetUserPassword(user:ManagedUser) {
     const password=window.prompt(`ตั้งรหัสผ่านใหม่สำหรับ ${user.displayName} (อย่างน้อย 8 ตัวอักษร)`); if(!password)return;
     const response=await fetch("/api/users",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:user.id,password})}); const data=await response.json();
     window.alert(response.ok?"เปลี่ยนรหัสผ่านเรียบร้อย":data.message);
+    if (response.ok) addAudit("ตั้งรหัสผ่านใหม่", user.displayName, "จัดการผู้ใช้งาน", "warning");
   }
   async function addCategory(event: React.FormEvent) {
     event.preventDefault(); setActionError("");
@@ -550,6 +601,7 @@ export default function POSDashboard({ products, categories: initialCategories, 
     if (!response.ok) { setActionError(data.message); return; }
     setCategoryList(data); setCategoryDraft("");
     if (!productDraft.category && data[0]) setProductDraft((draft)=>({ ...draft, category: data[0].name }));
+    addAudit("เพิ่มหมวดสินค้า", categoryDraft.trim(), "หมวดสินค้า", "success");
   }
   async function updateCategory(event: React.FormEvent) {
     event.preventDefault(); if (!editingCategory) return; setActionError("");
@@ -562,6 +614,7 @@ export default function POSDashboard({ products, categories: initialCategories, 
     setCart((items)=>items.map((item)=>item.category===oldName?{...item,category:editingCategory.name}:item));
     if (category === oldName) setCategory(editingCategory.name);
     if (productDraft.category === oldName) setProductDraft((draft)=>({ ...draft, category: editingCategory.name }));
+    addAudit("แก้ไขหมวดสินค้า", `${oldName} → ${editingCategory.name}`, "หมวดสินค้า", "info");
   }
   async function removeCategory(item: ProductCategory) {
     if (!window.confirm(`ยืนยันการลบหมวด "${item.name}"?`)) return;
@@ -572,6 +625,7 @@ export default function POSDashboard({ products, categories: initialCategories, 
     setCategoryList(data);
     if (category === item.name) setCategory("ทั้งหมด");
     if (productDraft.category === item.name) setProductDraft((draft)=>({ ...draft, category: data[0]?.name ?? "" }));
+    addAudit("ลบหมวดสินค้า", item.name, "หมวดสินค้า", "danger");
   }
   function openCustomerForm(customer?: CustomerRecord) {
     setActionError("");
@@ -616,10 +670,12 @@ export default function POSDashboard({ products, categories: initialCategories, 
     setShowCustomerForm(false);
     setEditingCustomerId(null);
     setActionError("");
+    addAudit(editingCustomerId ? "แก้ไขลูกค้า" : "เพิ่มลูกค้า", `${payload.name} · เครดิต ${formatMoney(payload.creditLimit)}`, "ลูกค้า", editingCustomerId ? "info" : "success");
   }
   function removeCustomer(customer: CustomerRecord) {
     if (!window.confirm(`ยืนยันการลบลูกค้า "${customer.name}"?`)) return;
     setCustomerRecords((items) => items.filter((item) => item.id !== customer.id));
+    addAudit("ลบลูกค้า", customer.name, "ลูกค้า", "danger");
   }
   function choosePosCustomer(name: string) {
     setCustomerName(name.trim() || "ลูกค้าทั่วไป");
@@ -671,15 +727,18 @@ export default function POSDashboard({ products, categories: initialCategories, 
     setShowDeliveryForm(false);
     setSelectedDelivery(payload);
     setActionError("");
+    addAudit("สร้างงานจัดส่ง", `${payload.no} · ${payload.customer} · ${payload.area}`, "จัดส่ง", "success");
   }
   function updateDeliveryStatus(delivery: DeliveryRecord, status: DeliveryStatus) {
     setDeliveryRecords((items) => items.map((item) => item.id === delivery.id ? { ...item, status } : item));
     setSelectedDelivery((current) => current?.id === delivery.id ? { ...current, status } : current);
+    addAudit("เปลี่ยนสถานะจัดส่ง", `${delivery.no}: ${delivery.status} → ${status}`, "จัดส่ง", status === "ยกเลิก" ? "warning" : "info");
   }
   function removeDelivery(delivery: DeliveryRecord) {
     if (!window.confirm(`ยืนยันการลบงานจัดส่ง ${delivery.no}?`)) return;
     setDeliveryRecords((items) => items.filter((item) => item.id !== delivery.id));
     setSelectedDelivery((current) => current?.id === delivery.id ? null : current);
+    addAudit("ลบงานจัดส่ง", `${delivery.no} · ${delivery.customer}`, "จัดส่ง", "danger");
   }
 
   const navItems = ([
@@ -832,6 +891,7 @@ export default function POSDashboard({ products, categories: initialCategories, 
             <button className={settingsSection === "receipt" ? "active" : ""} onClick={() => setSettingsSection("receipt")}><Printer size={17}/> ใบเสร็จ</button>
             <button className={settingsSection === "inventory" ? "active" : ""} onClick={() => setSettingsSection("inventory")}><Boxes size={17}/> สินค้าและสต็อก</button>
             <button className={settingsSection === "categories" ? "active" : ""} onClick={() => setSettingsSection("categories")}><PackageSearch size={17}/> หมวดสินค้า</button>
+            <button className={settingsSection === "audit" ? "active" : ""} onClick={() => setSettingsSection("audit")}><FileText size={17}/> สำรองข้อมูล / Audit Log</button>
             {currentUser.role === "admin" && <button className={settingsSection === "users" ? "active" : ""} onClick={() => setSettingsSection("users")}><UserCog size={17}/> จัดการผู้ใช้งาน</button>}
           </nav><div className="settings-forms">
             {settingsSection === "store" && <section className="settings-card store-info-card">
@@ -885,6 +945,12 @@ export default function POSDashboard({ products, categories: initialCategories, 
                 <button className="primary-action"><Save size={16}/> {editingCategory ? "บันทึกชื่อหมวด" : "เพิ่มหมวด"}</button>
               </form>
               <div className="category-admin-list">{categoryList.map((item)=><article key={item.id} className="category-admin-item"><div><strong>{item.name}</strong><small>{item.productCount.toLocaleString("th-TH")} รายการสินค้า</small></div><div className="row-actions"><button className="table-action" onClick={()=>setEditingCategory(item)}>แก้ไข</button><button className="table-action danger-button" disabled={item.productCount > 0} onClick={()=>removeCategory(item)}>ลบ</button></div></article>)}</div>
+            </section>}
+            {settingsSection === "audit" && <section className="settings-card audit-settings-card">
+              <div className="settings-card-title"><span><FileText/></span><div><h2>สำรองข้อมูล / Audit Log</h2><p>ติดตามการทำงานสำคัญของผู้ใช้ และดาวน์โหลดไฟล์สำรองข้อมูลระบบ</p></div></div>
+              <div className="audit-summary-grid"><article><span>เหตุการณ์ทั้งหมด</span><strong>{auditLogs.length}</strong><small>เก็บล่าสุดสูงสุด 200 รายการ</small></article><article><span>วันนี้</span><strong>{auditTodayCount}</strong><small>รายการที่เกิดขึ้นวันนี้</small></article><article><span>ต้องตรวจสอบ</span><strong>{auditDangerCount}</strong><small>warning / danger</small></article><article><span>ข้อมูลสำรอง</span><strong>{inventoryProducts.length + customerRecords.length + deliveryRecords.length}</strong><small>สินค้า + ลูกค้า + จัดส่ง</small></article></div>
+              <div className="backup-actions"><button className="primary-action" onClick={exportBackup}><Save size={16}/> ดาวน์โหลด Backup</button><button className="outline-action" onClick={exportAuditLogs}><FileText size={16}/> Export Audit Log</button><div><strong>ข้อมูลที่รวมใน backup</strong><small>ตั้งค่าร้าน, สินค้า, หมวดสินค้า, ลูกค้า, งานจัดส่ง, รายการขายที่โหลดอยู่ และ Audit Log</small></div></div>
+              <div className="audit-log-list">{latestAuditLogs.map((log)=><article key={log.id} className={`audit-item ${log.severity}`}><span>{log.module}</span><div><strong>{log.action}</strong><small>{log.detail}</small></div><em>{log.actor} · {log.role}<br/>{new Date(log.createdAt).toLocaleString("th-TH",{dateStyle:"short",timeStyle:"short"})}</em></article>)}{latestAuditLogs.length===0&&<p>ยังไม่มี Audit Log</p>}</div>
             </section>}
             {settingsSection === "users" && currentUser.role === "admin" && <section className="settings-card user-settings-card"><div className="settings-card-title"><span><UserCog/></span><div><h2>จัดการผู้ใช้งาน</h2><p>เพิ่มผู้ใช้ กำหนดบทบาท ตั้งรหัสผ่าน และระงับการเข้าใช้งาน</p></div><button className="primary-action user-add-button" onClick={()=>{setActionError("");setShowUserForm(true)}}><Plus size={16}/> เพิ่มผู้ใช้</button></div><div className="user-summary"><span><strong>{users.length}</strong> บัญชีทั้งหมด</span><span><strong>{users.filter(u=>u.isActive).length}</strong> กำลังใช้งาน</span><span><strong>{users.filter(u=>!u.isActive).length}</strong> ถูกระงับ</span></div><div className="table-scroll"><table><thead><tr><th>ผู้ใช้งาน</th><th>ชื่อผู้ใช้</th><th>บทบาท</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>{users.map(user=><tr key={user.id}><td><div className="user-cell"><CircleUserRound/><strong>{user.displayName}</strong></div></td><td>@{user.username}</td><td><span className={`role-chip role-${user.role}`}>{roleLabels[user.role]}</span></td><td><span className={`status-chip ${user.isActive?"success":"danger"}`}>{user.isActive?"ใช้งาน":"ระงับ"}</span></td><td><div className="row-actions"><button className="table-action" onClick={()=>resetUserPassword(user)}>ตั้งรหัสผ่าน</button><button className="table-action" disabled={user.id===currentUser.id} onClick={()=>toggleUser(user)}>{user.isActive?"ระงับบัญชี":"เปิดใช้งาน"}</button></div></td></tr>)}</tbody></table></div></section>}
           </div></div>
