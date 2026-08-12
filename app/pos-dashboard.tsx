@@ -170,6 +170,9 @@ export default function POSDashboard({ products, categories: initialCategories, 
     status: "active",
   });
   const [actionError, setActionError] = useState("");
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [saleRecords, setSaleRecords] = useState<SaleRecord[]>([]);
   const [salesSummary, setSalesSummary] = useState<SalesSummary>({ totalSales: 0, billCount: 0, averagePerBill: 0, cashTotal: 0 });
   const [salesPeriod, setSalesPeriod] = useState<"today" | "7days" | "month">("today");
@@ -375,6 +378,9 @@ export default function POSDashboard({ products, categories: initialCategories, 
   const completedDeliveries = deliveryRecords.filter((delivery) => delivery.status === "ส่งสำเร็จ");
   const deliveryDrivers = [...new Set(deliveryRecords.map((delivery) => delivery.driver))];
   const selectedDeliveryDriver = deliveryRecords.find((delivery) => delivery.status === "กำลังจัดส่ง") || deliveryRecords[0];
+  const urgentStockNotifications = lowStockProducts.slice(0, 5);
+  const deliveryNotifications = activeDeliveries.slice(0, 5);
+  const notificationCount = lowStock + activeDeliveries.length;
 
   function addToCart(product: Product) {
     if (product.stock <= 0) {
@@ -703,8 +709,22 @@ export default function POSDashboard({ products, categories: initialCategories, 
           <div><p className="eyebrow">{settings.storeName.toUpperCase()}</p><h1>{pageNames[activePage]}</h1></div>
           <div className="topbar-actions">
             <span className={`db-pill ${databaseConnected ? "online" : "offline"}`}><Wifi size={14} /> {databaseConnected ? "ฐานข้อมูลพร้อมใช้" : "ข้อมูลตัวอย่าง"}</span>
-            <button className="notification" aria-label="การแจ้งเตือน"><Bell size={18} /><i>{lowStock}</i></button>
-            <div className="cashier"><CircleUserRound /><span><strong>{currentUser.displayName}</strong><small>{roleLabels[currentUser.role]}</small></span><ChevronDown size={16} /></div>
+            <div className="notification-wrap">
+              <button className={`notification ${showNotifications ? "active" : ""}`} aria-label="การแจ้งเตือน" aria-expanded={showNotifications} onClick={()=>setShowNotifications((open)=>!open)}><Bell size={18} />{notificationCount > 0 && <i>{notificationCount}</i>}</button>
+              {showNotifications && <div className="notification-panel">
+                <div className="notification-head"><div><strong>การแจ้งเตือน</strong><small>{notificationCount} รายการที่ต้องติดตาม</small></div><button onClick={()=>setShowNotifications(false)} aria-label="ปิดแจ้งเตือน"><X size={14}/></button></div>
+                <section><h3><Bell size={14}/> สินค้าใกล้หมด</h3>{urgentStockNotifications.map((product)=><button key={product.id} onClick={()=>{setInventorySearch(product.sku);setActivePage("products");setShowNotifications(false)}}><span className={product.stock<=0?"danger":"warning"}>{product.stock<=0?"หมด":"ใกล้หมด"}</span><div><strong>{product.name}</strong><small>{product.sku} · เหลือ {product.stock.toLocaleString("th-TH")} {product.unit}</small></div></button>)}{urgentStockNotifications.length===0&&<p>สต็อกยังอยู่ในเกณฑ์ปกติ</p>}</section>
+                <section><h3><Truck size={14}/> งานที่ต้องจัดส่ง</h3>{deliveryNotifications.map((delivery)=><button key={delivery.id} onClick={()=>{setDeliveryStatusFilter(delivery.status);setActivePage("delivery");setShowNotifications(false)}}><span className="blue">{delivery.status}</span><div><strong>{delivery.no} · {delivery.customer}</strong><small>{delivery.area} · {delivery.time} · {delivery.items} รายการ</small></div></button>)}{deliveryNotifications.length===0&&<p>ไม่มีงานจัดส่งค้างอยู่</p>}</section>
+                <div className="notification-actions"><button onClick={()=>{setActivePage("products");setShowNotifications(false)}}>ดูสินค้าใกล้หมด</button><button onClick={()=>{setActivePage("delivery");setShowNotifications(false)}}>ดูงานจัดส่ง</button></div>
+              </div>}
+            </div>
+            <div className="user-menu-wrap">
+              <button className={`cashier ${showUserMenu ? "active" : ""}`} aria-label="เมนูผู้ใช้งาน" aria-expanded={showUserMenu} onClick={()=>{setShowUserMenu((open)=>!open);setShowNotifications(false)}}><CircleUserRound /><span><strong>{currentUser.displayName}</strong><small>{roleLabels[currentUser.role]}</small></span><ChevronDown size={16} /></button>
+              {showUserMenu && <div className="user-dropdown">
+                <button onClick={()=>{setShowProfile(true);setShowUserMenu(false)}}><CircleUserRound size={16}/><span><strong>ข้อมูลส่วนตัว</strong><small>ดูบัญชีและสิทธิ์การใช้งาน</small></span></button>
+                <form action="/api/auth/logout" method="post"><button type="submit"><LogOut size={16}/><span><strong>ออกจากระบบ</strong><small>ออกจากระบบ POS</small></span></button></form>
+              </div>}
+            </div>
           </div>
         </header>
 
@@ -868,6 +888,16 @@ export default function POSDashboard({ products, categories: initialCategories, 
             </section>}
             {settingsSection === "users" && currentUser.role === "admin" && <section className="settings-card user-settings-card"><div className="settings-card-title"><span><UserCog/></span><div><h2>จัดการผู้ใช้งาน</h2><p>เพิ่มผู้ใช้ กำหนดบทบาท ตั้งรหัสผ่าน และระงับการเข้าใช้งาน</p></div><button className="primary-action user-add-button" onClick={()=>{setActionError("");setShowUserForm(true)}}><Plus size={16}/> เพิ่มผู้ใช้</button></div><div className="user-summary"><span><strong>{users.length}</strong> บัญชีทั้งหมด</span><span><strong>{users.filter(u=>u.isActive).length}</strong> กำลังใช้งาน</span><span><strong>{users.filter(u=>!u.isActive).length}</strong> ถูกระงับ</span></div><div className="table-scroll"><table><thead><tr><th>ผู้ใช้งาน</th><th>ชื่อผู้ใช้</th><th>บทบาท</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>{users.map(user=><tr key={user.id}><td><div className="user-cell"><CircleUserRound/><strong>{user.displayName}</strong></div></td><td>@{user.username}</td><td><span className={`role-chip role-${user.role}`}>{roleLabels[user.role]}</span></td><td><span className={`status-chip ${user.isActive?"success":"danger"}`}>{user.isActive?"ใช้งาน":"ระงับ"}</span></td><td><div className="row-actions"><button className="table-action" onClick={()=>resetUserPassword(user)}>ตั้งรหัสผ่าน</button><button className="table-action" disabled={user.id===currentUser.id} onClick={()=>toggleUser(user)}>{user.isActive?"ระงับบัญชี":"เปิดใช้งาน"}</button></div></td></tr>)}</tbody></table></div></section>}
           </div></div>
+        </div>}
+
+        {showProfile && <div className="modal-backdrop" role="presentation" onMouseDown={()=>setShowProfile(false)}>
+          <section className="app-modal profile-modal" onMouseDown={(event)=>event.stopPropagation()}>
+            <div className="modal-title"><div><h2>ข้อมูลส่วนตัว</h2><p>รายละเอียดบัญชีผู้ใช้งานและสิทธิ์ในระบบ POS</p></div><button type="button" onClick={()=>setShowProfile(false)}><X/></button></div>
+            <div className="profile-card"><span><CircleUserRound size={42}/></span><div><small>ผู้ใช้งานปัจจุบัน</small><strong>{currentUser.displayName}</strong><em>@{currentUser.username}</em></div></div>
+            <div className="profile-detail-grid"><article><span>รหัสผู้ใช้</span><strong>#{currentUser.id}</strong></article><article><span>บทบาท</span><strong>{roleLabels[currentUser.role]}</strong></article><article><span>สิทธิ์สินค้า</span><strong>{canAccess(currentUser.role,"manage_products") ? "จัดการได้" : "ดูได้"}</strong></article><article><span>สิทธิ์รายงาน</span><strong>{canAccess(currentUser.role,"reports") ? "ดูได้" : "ไม่มีสิทธิ์"}</strong></article></div>
+            <div className="permission-note"><strong>สิทธิ์ของบัญชีนี้</strong><span>{currentUser.role==="admin"?"ใช้งานได้ทุกเมนู รวมถึงจัดการผู้ใช้งาน":currentUser.role==="manager"?"ใช้งานได้ทุกเมนู ยกเว้นจัดการผู้ใช้งาน":currentUser.role==="warehouse"?"จัดการคลัง เพิ่ม-ลบสินค้า และขายหน้าร้านได้":"ขายหน้าร้านและดูรายการสินค้าได้"}</span></div>
+            <div className="modal-actions"><button type="button" className="outline-action" onClick={()=>setShowProfile(false)}>ปิด</button><form action="/api/auth/logout" method="post"><button className="primary-action"><LogOut size={16}/> ออกจากระบบ</button></form></div>
+          </section>
         </div>}
 
         {showPayment && <div className="modal-backdrop payment-backdrop" role="presentation" onMouseDown={() => checkoutState !== "saving" && setShowPayment(false)}>
