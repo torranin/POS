@@ -13,7 +13,7 @@ import type { CurrentUser } from "@/lib/auth";
 import { canAccess, roleLabels, type UserRole } from "@/lib/roles";
 
 type CartItem = Product & { qty: number };
-type PageKey = "pos" | "products" | "sales" | "delivery" | "customers" | "reports" | "settings" | "users";
+type PageKey = "pos" | "products" | "sales" | "delivery" | "customers" | "receivables" | "reports" | "settings" | "users";
 type SettingsSection = "store" | "sales" | "receipt" | "inventory" | "categories" | "audit" | "users";
 type Props = { products: Product[]; categories: ProductCategory[]; databaseConnected: boolean; initialSettings: StoreSettings; currentUser: CurrentUser };
 type ManagedUser = { id: number; username: string; displayName: string; role: UserRole; isActive: number; lastLoginAt: string | null };
@@ -59,6 +59,7 @@ type SaleRecord = {
 };
 type SalesSummary = { totalSales: number; billCount: number; averagePerBill: number; cashTotal: number };
 type AuditLog = { id: number; action: string; detail: string; module: string; actor: string; role: string; createdAt: string; severity: "info" | "success" | "warning" | "danger" };
+type CreditPayment = { id: number; customerId: number; customerName: string; amount: number; method: "cash" | "transfer" | "cheque"; reference: string; note: string; createdAt: string; cashier: string };
 type CustomerRecord = {
   id: number;
   name: string;
@@ -93,7 +94,7 @@ type DeliveryRecord = {
   status: DeliveryStatus;
 };
 
-const pageNames: Record<PageKey, string> = { pos: "ขายหน้าร้าน", products: "สินค้าและสต็อก", sales: "รายการขาย", delivery: "งานจัดส่ง", customers: "ลูกค้า", reports: "รายงานภาพรวม", settings: "ตั้งค่าระบบ", users: "จัดการผู้ใช้งาน" };
+const pageNames: Record<PageKey, string> = { pos: "ขายหน้าร้าน", products: "สินค้าและสต็อก", sales: "รายการขาย", delivery: "งานจัดส่ง", customers: "ลูกค้า", receivables: "ลูกหนี้ / รับชำระเครดิต", reports: "รายงานภาพรวม", settings: "ตั้งค่าระบบ", users: "จัดการผู้ใช้งาน" };
 const deliverySeeds: DeliveryRecord[] = [
   { id: 1, no: "DLV-0062", customer: "หจก. รุ่งเรืองก่อสร้าง", phone: "081-234-5566", area: "มีนบุรี กทม.", address: "ไซต์งานถนนร่มเกล้า มีนบุรี กรุงเทพฯ", time: "09:00–11:00", truck: "1ฒก 4582", driver: "คุณวิชัย ชำนาญทาง", driverPhone: "089-123-4567", items: 12, amount: 12840, note: "โทรก่อนถึง 20 นาที", status: "กำลังจัดส่ง" },
   { id: 2, no: "DLV-0063", customer: "บจก. เอส.พี.โฮม", phone: "089-772-1900", area: "ลาดกระบัง กทม.", address: "โครงการบ้านจัดสรร ลาดกระบัง กรุงเทพฯ", time: "11:00–13:00", truck: "2ฒข 7109", driver: "คุณสมพร ส่งไว", driverPhone: "086-222-7788", items: 28, amount: 28650, note: "เตรียมเอกสารวางบิลพร้อมสินค้า", status: "เตรียมสินค้า" },
@@ -105,6 +106,10 @@ const customerSeeds: CustomerRecord[] = [
   { id: 2, name: "บจก. เอส.พี.โฮม", phone: "089-772-1900", type: "ผู้รับเหมา", contact: "คุณศุภชัย", taxId: "0105566123002", address: "ลาดกระบัง กรุงเทพฯ", orders: 11, total: 126425, creditLimit: 120000, creditUsed: 84000, creditTerm: 45, lastOrder: "วันนี้ 10:16", status: "active" },
   { id: 3, name: "คุณสมชาย ใจดี", phone: "086-555-2048", type: "ลูกค้าทั่วไป", contact: "คุณสมชาย", taxId: "", address: "บางพลี สมุทรปราการ", orders: 5, total: 18650, creditLimit: 0, creditUsed: 0, creditTerm: 0, lastOrder: "11 ส.ค. 2569", status: "watch" },
   { id: 4, name: "ร้านช่างเอก", phone: "082-448-6110", type: "ลูกค้าประจำ", contact: "คุณเอก", taxId: "0105566123004", address: "สะพานสูง กรุงเทพฯ", orders: 9, total: 58350, creditLimit: 50000, creditUsed: 12500, creditTerm: 30, lastOrder: "10 ส.ค. 2569", status: "active" },
+];
+const creditPaymentSeeds: CreditPayment[] = [
+  { id: 1, customerId: 1, customerName: "หจก. รุ่งเรืองก่อสร้าง", amount: 12000, method: "transfer", reference: "TR-0826-001", note: "โอนชำระบางส่วน", createdAt: new Date().toISOString(), cashier: "ระบบตัวอย่าง" },
+  { id: 2, customerId: 4, customerName: "ร้านช่างเอก", amount: 5000, method: "cash", reference: "RCV-0826-002", note: "รับเงินสดหน้าร้าน", createdAt: new Date(Date.now() - 86400000).toISOString(), cashier: "ระบบตัวอย่าง" },
 ];
 
 function ProductArt({ icon }: { icon: string }) {
@@ -157,6 +162,12 @@ export default function POSDashboard({ products, categories: initialCategories, 
   const [customerTypeFilter, setCustomerTypeFilter] = useState<"ทั้งหมด" | CustomerRecord["type"]>("ทั้งหมด");
   const [showCustomerForm, setShowCustomerForm] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRecord | null>(null);
+  const [creditPayments, setCreditPayments] = useState<CreditPayment[]>(creditPaymentSeeds);
+  const [receivableSearch, setReceivableSearch] = useState("");
+  const [receivableFilter, setReceivableFilter] = useState<"all" | "due" | "overlimit">("all");
+  const [showCreditPayment, setShowCreditPayment] = useState(false);
+  const [selectedDebtor, setSelectedDebtor] = useState<CustomerRecord | null>(null);
+  const [creditPaymentDraft, setCreditPaymentDraft] = useState({ amount: 0, method: "transfer" as CreditPayment["method"], reference: "", note: "" });
   const [editingCustomerId, setEditingCustomerId] = useState<number | null>(null);
   const [customerDraft, setCustomerDraft] = useState<Omit<CustomerRecord, "id" | "orders" | "total" | "lastOrder">>({
     name: "",
@@ -361,6 +372,17 @@ export default function POSDashboard({ products, categories: initialCategories, 
   const totalCustomerSales = customerRecords.reduce((sum, customer) => sum + customer.total, 0);
   const totalCreditLimit = customerRecords.reduce((sum, customer) => sum + customer.creditLimit, 0);
   const totalCreditUsed = customerRecords.reduce((sum, customer) => sum + customer.creditUsed, 0);
+  const debtorCustomers = useMemo(() => customerRecords.filter((customer) => customer.creditUsed > 0).filter((customer) => {
+    const term = receivableSearch.trim().toLowerCase();
+    const matchesTerm = !term || customer.name.toLowerCase().includes(term) || customer.phone.includes(term) || customer.contact.toLowerCase().includes(term) || customer.taxId.includes(term);
+    const isDue = customer.creditTerm > 0 && customer.creditUsed > 0;
+    const isOverLimit = customer.creditLimit > 0 && customer.creditUsed > customer.creditLimit;
+    return matchesTerm && (receivableFilter === "all" || (receivableFilter === "due" && isDue) || (receivableFilter === "overlimit" && isOverLimit));
+  }).sort((a, b) => b.creditUsed - a.creditUsed), [customerRecords, receivableSearch, receivableFilter]);
+  const totalReceivable = customerRecords.reduce((sum, customer) => sum + customer.creditUsed, 0);
+  const overLimitCustomers = customerRecords.filter((customer) => customer.creditLimit > 0 && customer.creditUsed > customer.creditLimit);
+  const dueCustomers = customerRecords.filter((customer) => customer.creditUsed > 0 && customer.creditTerm > 0);
+  const latestCreditPayments = creditPayments.slice(0, 8);
   const posCustomerMatches = useMemo(() => {
     const term = posCustomerSearch.trim().toLowerCase();
     return customerRecords.filter((customer) => !term || customer.name.toLowerCase().includes(term) || customer.phone.toLowerCase().includes(term) || customer.contact.toLowerCase().includes(term) || customer.taxId.includes(term)).slice(0, 10);
@@ -371,6 +393,7 @@ export default function POSDashboard({ products, categories: initialCategories, 
   const displayedCustomerHistory = selectedCustomer ? (customerSaleHistory.length ? customerSaleHistory : [
     { id: -selectedCustomer.id, receiptNo: "MOCK-CREDIT", taxInvoiceNo: selectedCustomer.taxId ? "TAX-MOCK" : "", customerName: selectedCustomer.name, cashierName: "ระบบตัวอย่าง", createdAt: new Date().toISOString(), paymentMethod: "cash" as const, paymentLabel: "เครดิตลูกค้า", subtotal: selectedCustomer.creditUsed, discount: 0, vat: 0, rounding: 0, total: selectedCustomer.creditUsed, amountReceived: 0, changeDue: 0, itemCount: Math.max(1, selectedCustomer.orders), status: selectedCustomer.creditUsed > 0 ? "completed" as const : "voided" as const },
   ].filter((sale) => sale.total > 0)) : [];
+  const selectedCustomerPayments = selectedCustomer ? creditPayments.filter((payment) => payment.customerId === selectedCustomer.id) : [];
   const deliveryTone = (status: DeliveryStatus) => status === "กำลังจัดส่ง" ? "blue" : status === "เตรียมสินค้า" ? "orange" : status === "ส่งสำเร็จ" ? "green" : status === "ยกเลิก" ? "danger" : "gray";
   const visibleDeliveries = useMemo(() => deliveryRecords.filter((delivery) => {
     const term = deliverySearch.trim().toLowerCase();
@@ -435,6 +458,7 @@ export default function POSDashboard({ products, categories: initialCategories, 
       products: inventoryProducts,
       categories: categoryList,
       customers: customerRecords,
+      creditPayments,
       deliveries: deliveryRecords,
       visibleSales: saleRecords,
       auditLogs,
@@ -497,6 +521,9 @@ export default function POSDashboard({ products, categories: initialCategories, 
         const sold = soldItems.find((item) => item.id === product.id);
         return sold ? { ...product, stock: Math.max(0, product.stock - sold.qty) } : product;
       }));
+      if (paymentMethod === "card") {
+        setCustomerRecords((items) => items.map((customer) => customer.name === customerName ? { ...customer, creditUsed: customer.creditUsed + data.receipt.total, total: customer.total + data.receipt.total, orders: customer.orders + 1, lastOrder: "วันนี้" } : customer));
+      }
       setCheckoutState("idle");
       setSalesReloadKey((value) => value + 1);
       addAudit("ขายสินค้า", `บันทึกบิล ${data.receipt.receiptNo} ลูกค้า ${customerName} ยอด ${formatMoney(data.receipt.total)}`, "ขายหน้าร้าน", "success");
@@ -682,6 +709,39 @@ export default function POSDashboard({ products, categories: initialCategories, 
     setShowCustomerPicker(false);
     setPosCustomerSearch("");
   }
+  function openCreditPayment(customer: CustomerRecord) {
+    setSelectedDebtor(customer);
+    setCreditPaymentDraft({ amount: customer.creditUsed, method: "transfer", reference: `RCV-${new Date().toISOString().slice(5, 10).replace("-", "")}-${String(creditPayments.length + 1).padStart(3, "0")}`, note: "" });
+    setActionError("");
+    setShowCreditPayment(true);
+  }
+  function receiveCreditPayment(event: React.FormEvent) {
+    event.preventDefault();
+    if (!selectedDebtor) return;
+    const amount = Math.min(selectedDebtor.creditUsed, Math.max(0, Number(creditPaymentDraft.amount) || 0));
+    if (amount <= 0) {
+      setActionError("กรุณาระบุยอดรับชำระมากกว่า 0");
+      return;
+    }
+    const payment: CreditPayment = {
+      id: Date.now(),
+      customerId: selectedDebtor.id,
+      customerName: selectedDebtor.name,
+      amount,
+      method: creditPaymentDraft.method,
+      reference: creditPaymentDraft.reference.trim() || `RCV-${Date.now()}`,
+      note: creditPaymentDraft.note.trim(),
+      createdAt: new Date().toISOString(),
+      cashier: currentUser.displayName,
+    };
+    setCreditPayments((items) => [payment, ...items]);
+    setCustomerRecords((items) => items.map((customer) => customer.id === selectedDebtor.id ? { ...customer, creditUsed: Math.max(0, customer.creditUsed - amount) } : customer));
+    setSelectedCustomer((customer) => customer?.id === selectedDebtor.id ? { ...customer, creditUsed: Math.max(0, customer.creditUsed - amount) } : customer);
+    addAudit("รับชำระเครดิต", `${selectedDebtor.name} ชำระ ${formatMoney(amount)} เลขอ้างอิง ${payment.reference}`, "ลูกหนี้", "success");
+    setShowCreditPayment(false);
+    setSelectedDebtor(null);
+    setActionError("");
+  }
   function openDeliveryForm(customer?: CustomerRecord) {
     setActionError("");
     setDeliveryDraft({
@@ -747,6 +807,7 @@ export default function POSDashboard({ products, categories: initialCategories, 
     { key: "sales", label: "รายการขาย", icon: <ClipboardList />, show: canAccess(currentUser.role,"sales") },
     { key: "delivery", label: "จัดส่ง", icon: <Truck />, show: canAccess(currentUser.role,"delivery") },
     { key: "customers", label: "ลูกค้า", icon: <CircleUserRound />, show: true },
+    { key: "receivables", label: "ลูกหนี้", icon: <CreditCard />, show: canAccess(currentUser.role,"sales") },
     { key: "reports", label: "รายงาน", icon: <BarChart3 />, show: canAccess(currentUser.role,"reports") },
   ] satisfies { key: PageKey; label: string; icon: React.ReactNode; show: boolean }[]).filter((item)=>item.show);
 
@@ -867,6 +928,15 @@ export default function POSDashboard({ products, categories: initialCategories, 
             </section>
           </div>
           <section className="data-panel"><div className="panel-toolbar"><label className="table-search"><Search size={17}/><input value={customerSearch} onChange={event=>setCustomerSearch(event.target.value)} placeholder="ค้นหาชื่อลูกค้า เบอร์โทร ผู้ติดต่อ หรือเลขภาษี"/></label><label className="table-select"><SlidersHorizontal size={16}/><select value={customerTypeFilter} onChange={event=>setCustomerTypeFilter(event.target.value as typeof customerTypeFilter)}><option value="ทั้งหมด">ทุกกลุ่มลูกค้า</option><option value="ลูกค้าทั่วไป">ลูกค้าทั่วไป</option><option value="ลูกค้าประจำ">ลูกค้าประจำ</option><option value="ผู้รับเหมา">ผู้รับเหมา</option><option value="นิติบุคคล">นิติบุคคล</option></select></label></div>{actionError&&<div className="table-error">{actionError}</div>}<div className="table-scroll"><table><thead><tr><th>ลูกค้า</th><th>ผู้ติดต่อ</th><th>เบอร์โทร</th><th>ประเภท</th><th>จำนวนบิล</th><th>ยอดซื้อรวม</th><th>วงเงิน</th><th>ใช้เครดิต</th><th>คงเหลือ</th><th>เทอม</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>{visibleCustomers.map(customer=>{ const creditRemain = Math.max(0, customer.creditLimit - customer.creditUsed); const creditPercent = customer.creditLimit ? Math.min(100, Math.round((customer.creditUsed / customer.creditLimit) * 100)) : 0; return <tr key={customer.id}><td><div className="user-cell"><CircleUserRound/><div><strong>{customer.name}</strong><small>{customer.address || customer.taxId || "-"}</small></div></div></td><td>{customer.contact || "-"}</td><td>{customer.phone}</td><td><span className="status-chip blue">{customer.type}</span></td><td>{customer.orders} บิล</td><td><strong>{formatMoney(customer.total)}</strong></td><td>{formatMoney(customer.creditLimit)}</td><td><div className="credit-meter"><strong>{formatMoney(customer.creditUsed)}</strong><span><i style={{width:`${creditPercent}%`}}/></span></div></td><td><strong>{formatMoney(creditRemain)}</strong></td><td>{customer.creditTerm || 0} วัน</td><td><span className={`status-chip ${customer.status==="active"?"success":customer.status==="watch"?"warning":"gray"}`}>{customer.status==="active"?"ใช้งาน":customer.status==="watch"?"ติดตาม":"ไม่ใช้งาน"}</span></td><td><div className="row-actions"><button className="table-action" onClick={()=>setSelectedCustomer(customer)}>ดูรายการ</button><button className="table-action" onClick={()=>{setCustomerName(customer.name);setActivePage("pos")}}>เปิดบิล</button><button className="icon-button" aria-label="แก้ไขลูกค้า" onClick={()=>openCustomerForm(customer)}><Pencil size={15}/></button><button className="icon-button danger-button" aria-label="ลบลูกค้า" onClick={()=>removeCustomer(customer)}><Trash2 size={15}/></button></div></td></tr>})}</tbody></table></div>{visibleCustomers.length===0&&<div className="empty-table">ไม่พบลูกค้าตามเงื่อนไขที่เลือก</div>}</section>
+        </div>}
+
+        {activePage === "receivables" && <div className="page-content">
+          <div className="page-actions"><div><p>ติดตามลูกหนี้เครดิต รับชำระบางส่วนหรือปิดยอดเต็มจำนวน</p></div><button className="outline-action" onClick={()=>setActivePage("customers")}><CircleUserRound size={17}/> ดูข้อมูลลูกค้า</button><button className="primary-action" onClick={()=>{const debtor=debtorCustomers[0]; if(debtor) openCreditPayment(debtor)}} disabled={debtorCustomers.length===0}><WalletCards size={17}/> รับชำระด่วน</button></div>
+          <div className="metrics"><Metric label="ยอดลูกหนี้รวม" value={formatMoney(totalReceivable)} note={`${debtorCustomers.length} รายมียอดค้าง`} icon={<CreditCard/>}/><Metric label="ครบกำหนด/มีเทอม" value={`${dueCustomers.length} ราย`} note="ต้องติดตามการวางบิล" icon={<Bell/>} tone="orange"/><Metric label="เกินวงเงิน" value={`${overLimitCustomers.length} ราย`} note={overLimitCustomers[0]?.name || "ไม่มีลูกค้าเกินวงเงิน"} icon={<SlidersHorizontal/>} tone={overLimitCustomers.length?"orange":"green"}/><Metric label="รับชำระล่าสุด" value={latestCreditPayments[0] ? formatMoney(latestCreditPayments[0].amount) : "฿0.00"} note={latestCreditPayments[0]?.customerName || "ยังไม่มีรายการ"} icon={<WalletCards/>} tone="green"/></div>
+          <div className="receivable-layout">
+            <section className="data-panel"><div className="panel-toolbar receivable-toolbar"><label className="table-search"><Search size={17}/><input value={receivableSearch} onChange={event=>setReceivableSearch(event.target.value)} placeholder="ค้นหาลูกหนี้ ชื่อ เบอร์โทร หรือเลขภาษี"/></label><div className="segmented"><button className={receivableFilter==="all"?"active":""} onClick={()=>setReceivableFilter("all")}>ทั้งหมด</button><button className={receivableFilter==="due"?"active":""} onClick={()=>setReceivableFilter("due")}>มีเทอมเครดิต</button><button className={receivableFilter==="overlimit"?"active":""} onClick={()=>setReceivableFilter("overlimit")}>เกินวงเงิน</button></div></div><div className="table-scroll"><table><thead><tr><th>ลูกหนี้</th><th>วงเงิน</th><th>ยอดค้าง</th><th>เครดิตคงเหลือ</th><th>เทอม</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>{debtorCustomers.map(customer=>{ const remain=customer.creditLimit-customer.creditUsed; const over=customer.creditLimit>0&&customer.creditUsed>customer.creditLimit; return <tr key={customer.id}><td><div className="user-cell"><CircleUserRound/><div><strong>{customer.name}</strong><small>{customer.phone} · {customer.contact || customer.type}</small></div></div></td><td>{formatMoney(customer.creditLimit)}</td><td><strong>{formatMoney(customer.creditUsed)}</strong></td><td><strong className={remain<0?"debt-danger":""}>{formatMoney(Math.max(0,remain))}</strong></td><td>{customer.creditTerm || 0} วัน</td><td><span className={`status-chip ${over?"danger":customer.creditTerm?"warning":"success"}`}>{over?"เกินวงเงิน":customer.creditTerm?"รอติดตาม":"ปกติ"}</span></td><td><div className="row-actions"><button className="table-action" onClick={()=>openCreditPayment(customer)}>รับชำระ</button><button className="table-action" onClick={()=>setSelectedCustomer(customer)}>ดูรายการ</button></div></td></tr>})}</tbody></table></div>{debtorCustomers.length===0&&<div className="empty-table">ไม่พบลูกหนี้ตามเงื่อนไขนี้</div>}</section>
+            <aside className="receivable-side"><section className="sales-card"><div className="sales-card-title"><span><WalletCards size={18}/></span><div><h2>ประวัติรับชำระล่าสุด</h2><p>เงินสด / โอน / เช็ค</p></div></div><div className="credit-payment-list">{latestCreditPayments.map(payment=><button key={payment.id} onClick={()=>setSelectedCustomer(customerRecords.find(c=>c.id===payment.customerId) || null)}><div><strong>{payment.customerName}</strong><small>{payment.reference} · {payment.method==="cash"?"เงินสด":payment.method==="transfer"?"โอนเงิน":"เช็ค"}</small></div><span>{formatMoney(payment.amount)}</span></button>)}{latestCreditPayments.length===0&&<p>ยังไม่มีประวัติรับชำระ</p>}</div></section></aside>
+          </div>
         </div>}
 
         {activePage === "reports" && <div className="page-content">
@@ -1006,7 +1076,9 @@ export default function POSDashboard({ products, categories: initialCategories, 
 
         {showCustomerForm && <div className="modal-backdrop" role="presentation" onMouseDown={()=>setShowCustomerForm(false)}><form className="app-modal" onSubmit={saveCustomer} onMouseDown={e=>e.stopPropagation()}><div className="modal-title"><div><h2>{editingCustomerId ? "แก้ไขลูกค้า" : "เพิ่มลูกค้าใหม่"}</h2><p>บันทึกข้อมูลติดต่อ ประเภทลูกค้า เลขภาษี และวงเงินเครดิต</p></div><button type="button" onClick={()=>setShowCustomerForm(false)}><X/></button></div>{actionError&&<div className="login-error">{actionError}</div>}<div className="form-grid"><label>ชื่อลูกค้า <em>*</em><input required value={customerDraft.name} onChange={e=>setCustomerDraft({...customerDraft,name:e.target.value})}/></label><label>เบอร์โทร <em>*</em><input required type="tel" value={customerDraft.phone} onChange={e=>setCustomerDraft({...customerDraft,phone:e.target.value})}/></label><label>ผู้ติดต่อ<input value={customerDraft.contact} onChange={e=>setCustomerDraft({...customerDraft,contact:e.target.value})}/></label><label>ประเภทลูกค้า<select value={customerDraft.type} onChange={e=>setCustomerDraft({...customerDraft,type:e.target.value as CustomerRecord["type"]})}><option value="ลูกค้าทั่วไป">ลูกค้าทั่วไป</option><option value="ลูกค้าประจำ">ลูกค้าประจำ</option><option value="ผู้รับเหมา">ผู้รับเหมา</option><option value="นิติบุคคล">นิติบุคคล</option></select></label><label>เลขประจำตัวผู้เสียภาษี<input inputMode="numeric" maxLength={13} value={customerDraft.taxId} onChange={e=>setCustomerDraft({...customerDraft,taxId:e.target.value.replace(/\D/g,"")})}/><small>{customerDraft.taxId ? `${customerDraft.taxId.length}/13 หลัก` : "เว้นว่างได้สำหรับลูกค้าทั่วไป"}</small></label><label>วงเงินเครดิต<input type="number" min="0" step="100" value={customerDraft.creditLimit} onChange={e=>setCustomerDraft({...customerDraft,creditLimit:Number(e.target.value)})}/></label><label>ใช้เครดิตแล้ว<input type="number" min="0" step="100" value={customerDraft.creditUsed} onChange={e=>setCustomerDraft({...customerDraft,creditUsed:Number(e.target.value)})}/></label><label>เทอมเครดิต (วัน)<input type="number" min="0" max="365" value={customerDraft.creditTerm} onChange={e=>setCustomerDraft({...customerDraft,creditTerm:Number(e.target.value)})}/></label><label>สถานะ<select value={customerDraft.status} onChange={e=>setCustomerDraft({...customerDraft,status:e.target.value as CustomerRecord["status"]})}><option value="active">ใช้งาน</option><option value="watch">ติดตาม</option><option value="inactive">ไม่ใช้งาน</option></select></label><label className="span-2">ที่อยู่<textarea rows={3} value={customerDraft.address} onChange={e=>setCustomerDraft({...customerDraft,address:e.target.value})}/></label></div><div className="modal-actions"><button type="button" className="outline-action" onClick={()=>setShowCustomerForm(false)}>ยกเลิก</button><button className="primary-action"><Save size={16}/> {editingCustomerId ? "บันทึกการแก้ไข" : "บันทึกลูกค้า"}</button></div></form></div>}
 
-        {selectedCustomer && <div className="modal-backdrop" role="presentation" onMouseDown={()=>setSelectedCustomer(null)}><section className="app-modal customer-detail-modal" onMouseDown={e=>e.stopPropagation()}><div className="modal-title"><div><h2>{selectedCustomer.name}</h2><p>{selectedCustomer.type} · {selectedCustomer.phone} · ผู้ติดต่อ {selectedCustomer.contact || "-"}</p></div><button type="button" onClick={()=>setSelectedCustomer(null)}><X/></button></div><div className="credit-summary-grid"><article><span>วงเงินเครดิต</span><strong>{formatMoney(selectedCustomer.creditLimit)}</strong><small>{selectedCustomer.creditTerm || 0} วัน</small></article><article><span>ใช้เครดิต</span><strong>{formatMoney(selectedCustomer.creditUsed)}</strong><small>{selectedCustomer.creditLimit ? `${Math.min(100, Math.round((selectedCustomer.creditUsed / selectedCustomer.creditLimit) * 100))}% ของวงเงิน` : "ไม่มีวงเงิน"}</small></article><article><span>เครดิตคงเหลือ</span><strong>{formatMoney(Math.max(0, selectedCustomer.creditLimit - selectedCustomer.creditUsed))}</strong><small>{selectedCustomer.creditUsed > selectedCustomer.creditLimit ? "เกินวงเงิน" : "พร้อมใช้งาน"}</small></article></div><section className="data-panel customer-history-panel"><div className="panel-title"><div><h2>รายการของลูกค้า</h2><p>ประวัติจากรายการขายที่บันทึกไว้ หรือข้อมูลเครดิตตัวอย่าง</p></div><span>{displayedCustomerHistory.length} รายการ</span></div><div className="table-scroll"><table><thead><tr><th>เลขที่บิล</th><th>วันเวลา</th><th>พนักงาน</th><th>สินค้า</th><th>ชำระโดย</th><th>ยอดสุทธิ</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>{displayedCustomerHistory.map(sale=><tr key={sale.id}><td>{sale.id > 0 ? <button className="sale-link" onClick={()=>viewSale(sale.id)}>{sale.receiptNo}</button> : <strong>{sale.receiptNo}</strong>}</td><td>{new Date(sale.createdAt).toLocaleString("th-TH",{dateStyle:"short",timeStyle:"short"})}</td><td>{sale.cashierName || "-"}</td><td>{sale.itemCount} ชิ้น</td><td>{sale.paymentLabel}</td><td><strong>{formatMoney(sale.total)}</strong></td><td><span className={`status-chip ${sale.status==="completed"?"success":sale.status==="refunded"?"warning":"danger"}`}>{sale.status==="completed"?"สำเร็จ":sale.status==="refunded"?"คืนเงิน":"ยกเลิก"}</span></td><td>{sale.id > 0 ? <button className="table-action" onClick={()=>viewSale(sale.id)}>ดูใบเสร็จ</button> : "-"}</td></tr>)}</tbody></table></div>{displayedCustomerHistory.length===0&&<div className="empty-table">ยังไม่มีรายการขายของลูกค้ารายนี้</div>}</section><div className="modal-actions"><button type="button" className="outline-action" onClick={()=>openCustomerForm(selectedCustomer)}><Pencil size={16}/> แก้ไขเครดิต</button><button type="button" className="primary-action" onClick={()=>{setCustomerName(selectedCustomer.name);setSelectedCustomer(null);setActivePage("pos")}}><Plus size={16}/> เปิดบิลให้ลูกค้านี้</button></div></section></div>}
+        {showCreditPayment && selectedDebtor && <div className="modal-backdrop" role="presentation" onMouseDown={()=>setShowCreditPayment(false)}><form className="app-modal credit-payment-modal" onSubmit={receiveCreditPayment} onMouseDown={e=>e.stopPropagation()}><div className="modal-title"><div><h2>รับชำระเครดิตลูกค้า</h2><p>{selectedDebtor.name} · ยอดค้าง {formatMoney(selectedDebtor.creditUsed)}</p></div><button type="button" onClick={()=>setShowCreditPayment(false)}><X/></button></div>{actionError&&<div className="login-error">{actionError}</div>}<div className="payment-total-card"><span>ยอดค้างปัจจุบัน</span><strong>{formatMoney(selectedDebtor.creditUsed)}</strong><small>วงเงิน {formatMoney(selectedDebtor.creditLimit)} · เทอม {selectedDebtor.creditTerm || 0} วัน</small></div><div className="form-grid"><label>ยอดรับชำระ <em>*</em><input autoFocus required type="number" min="0.01" max={selectedDebtor.creditUsed} step="0.01" value={creditPaymentDraft.amount} onChange={e=>setCreditPaymentDraft({...creditPaymentDraft,amount:Number(e.target.value)})}/><small>รับได้สูงสุด {formatMoney(selectedDebtor.creditUsed)}</small></label><label>วิธีรับชำระ<select value={creditPaymentDraft.method} onChange={e=>setCreditPaymentDraft({...creditPaymentDraft,method:e.target.value as CreditPayment["method"]})}><option value="transfer">โอนเงิน</option><option value="cash">เงินสด</option><option value="cheque">เช็ค</option></select></label><label>เลขอ้างอิง<input value={creditPaymentDraft.reference} onChange={e=>setCreditPaymentDraft({...creditPaymentDraft,reference:e.target.value})}/><small>เช่น เลขสลิป เลขใบรับเงิน หรือเลขเช็ค</small></label><label>ยอดค้างหลังรับ<input readOnly value={formatMoney(Math.max(0, selectedDebtor.creditUsed - (Number(creditPaymentDraft.amount) || 0)))}/></label><label className="span-2">หมายเหตุ<textarea rows={3} value={creditPaymentDraft.note} onChange={e=>setCreditPaymentDraft({...creditPaymentDraft,note:e.target.value})}/></label></div><div className="modal-actions"><button type="button" className="outline-action" onClick={()=>setShowCreditPayment(false)}>ยกเลิก</button><button className="primary-action"><Check size={16}/> บันทึกรับชำระ</button></div></form></div>}
+
+        {selectedCustomer && <div className="modal-backdrop" role="presentation" onMouseDown={()=>setSelectedCustomer(null)}><section className="app-modal customer-detail-modal" onMouseDown={e=>e.stopPropagation()}><div className="modal-title"><div><h2>{selectedCustomer.name}</h2><p>{selectedCustomer.type} · {selectedCustomer.phone} · ผู้ติดต่อ {selectedCustomer.contact || "-"}</p></div><button type="button" onClick={()=>setSelectedCustomer(null)}><X/></button></div><div className="credit-summary-grid"><article><span>วงเงินเครดิต</span><strong>{formatMoney(selectedCustomer.creditLimit)}</strong><small>{selectedCustomer.creditTerm || 0} วัน</small></article><article><span>ใช้เครดิต</span><strong>{formatMoney(selectedCustomer.creditUsed)}</strong><small>{selectedCustomer.creditLimit ? `${Math.min(100, Math.round((selectedCustomer.creditUsed / selectedCustomer.creditLimit) * 100))}% ของวงเงิน` : "ไม่มีวงเงิน"}</small></article><article><span>เครดิตคงเหลือ</span><strong>{formatMoney(Math.max(0, selectedCustomer.creditLimit - selectedCustomer.creditUsed))}</strong><small>{selectedCustomer.creditUsed > selectedCustomer.creditLimit ? "เกินวงเงิน" : "พร้อมใช้งาน"}</small></article></div><section className="data-panel customer-history-panel"><div className="panel-title"><div><h2>รายการของลูกค้า</h2><p>ประวัติจากรายการขายที่บันทึกไว้ หรือข้อมูลเครดิตตัวอย่าง</p></div><span>{displayedCustomerHistory.length} รายการ</span></div><div className="table-scroll"><table><thead><tr><th>เลขที่บิล</th><th>วันเวลา</th><th>พนักงาน</th><th>สินค้า</th><th>ชำระโดย</th><th>ยอดสุทธิ</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>{displayedCustomerHistory.map(sale=><tr key={sale.id}><td>{sale.id > 0 ? <button className="sale-link" onClick={()=>viewSale(sale.id)}>{sale.receiptNo}</button> : <strong>{sale.receiptNo}</strong>}</td><td>{new Date(sale.createdAt).toLocaleString("th-TH",{dateStyle:"short",timeStyle:"short"})}</td><td>{sale.cashierName || "-"}</td><td>{sale.itemCount} ชิ้น</td><td>{sale.paymentLabel}</td><td><strong>{formatMoney(sale.total)}</strong></td><td><span className={`status-chip ${sale.status==="completed"?"success":sale.status==="refunded"?"warning":"danger"}`}>{sale.status==="completed"?"สำเร็จ":sale.status==="refunded"?"คืนเงิน":"ยกเลิก"}</span></td><td>{sale.id > 0 ? <button className="table-action" onClick={()=>viewSale(sale.id)}>ดูใบเสร็จ</button> : "-"}</td></tr>)}</tbody></table></div>{displayedCustomerHistory.length===0&&<div className="empty-table">ยังไม่มีรายการขายของลูกค้ารายนี้</div>}</section><section className="data-panel customer-history-panel"><div className="panel-title"><div><h2>ประวัติรับชำระเครดิต</h2><p>รายการรับเงินจากลูกหนี้รายนี้</p></div><span>{selectedCustomerPayments.length} รายการ</span></div><div className="credit-payment-list customer-payment-history">{selectedCustomerPayments.map(payment=><button key={payment.id}><div><strong>{payment.reference}</strong><small>{new Date(payment.createdAt).toLocaleString("th-TH",{dateStyle:"short",timeStyle:"short"})} · {payment.method==="cash"?"เงินสด":payment.method==="transfer"?"โอนเงิน":"เช็ค"} · {payment.cashier}</small></div><span>{formatMoney(payment.amount)}</span></button>)}{selectedCustomerPayments.length===0&&<p>ยังไม่มีประวัติรับชำระ</p>}</div></section><div className="modal-actions"><button type="button" className="outline-action" onClick={()=>openCustomerForm(selectedCustomer)}><Pencil size={16}/> แก้ไขเครดิต</button><button type="button" className="outline-action" onClick={()=>openCreditPayment(selectedCustomer)} disabled={selectedCustomer.creditUsed<=0}><WalletCards size={16}/> รับชำระเครดิต</button><button type="button" className="primary-action" onClick={()=>{setCustomerName(selectedCustomer.name);setSelectedCustomer(null);setActivePage("pos")}}><Plus size={16}/> เปิดบิลให้ลูกค้านี้</button></div></section></div>}
 
         {showUserForm && <div className="modal-backdrop" role="presentation" onMouseDown={()=>setShowUserForm(false)}><form className="app-modal" onSubmit={addUser} onMouseDown={e=>e.stopPropagation()}><div className="modal-title"><div><h2>เพิ่มผู้ใช้งาน</h2><p>กำหนดบัญชีและสิทธิ์การเข้าใช้งาน</p></div><button type="button" onClick={()=>setShowUserForm(false)}><X/></button></div>{actionError&&<div className="login-error">{actionError}</div>}<div className="form-grid"><label>ชื่อ-นามสกุล<input required value={userDraft.displayName} onChange={e=>setUserDraft({...userDraft,displayName:e.target.value})}/></label><label>ชื่อผู้ใช้<input required minLength={3} pattern="[a-zA-Z0-9._-]+" value={userDraft.username} onChange={e=>setUserDraft({...userDraft,username:e.target.value})}/></label><label>รหัสผ่านเริ่มต้น<input required type="password" minLength={8} value={userDraft.password} onChange={e=>setUserDraft({...userDraft,password:e.target.value})}/><small>อย่างน้อย 8 ตัวอักษร</small></label><label>บทบาท<select value={userDraft.role} onChange={e=>setUserDraft({...userDraft,role:e.target.value as UserRole})}><option value="admin">ผู้ดูแลระบบ</option><option value="manager">ผู้จัดการ</option><option value="warehouse">เจ้าหน้าที่คลัง</option><option value="user">พนักงานขาย</option></select></label></div><div className="permission-note"><strong>สิทธิ์ของบทบาทนี้</strong><span>{userDraft.role==="admin"?"ใช้งานได้ทุกเมนู รวมถึงจัดการผู้ใช้":userDraft.role==="manager"?"ใช้งานได้ทุกเมนู ยกเว้นจัดการผู้ใช้":userDraft.role==="warehouse"?"ขายหน้าร้านและจัดการสินค้าในคลัง":"ขายหน้าร้านและดูรายการสินค้า"}</span></div><div className="modal-actions"><button type="button" className="outline-action" onClick={()=>setShowUserForm(false)}>ยกเลิก</button><button className="primary-action"><Save size={16}/> เพิ่มผู้ใช้งาน</button></div></form></div>}
       </section>

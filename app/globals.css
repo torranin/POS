@@ -257,6 +257,21 @@ kbd { font-family: inherit; font-size: 9px; background: #edf0ef; color: #778388;
 .credit-meter strong { font-size: 9px; }
 .credit-meter span { height: 6px; border-radius: 8px; overflow: hidden; background: #edf0ef; }
 .credit-meter i { display: block; height: 100%; border-radius: 8px; background: linear-gradient(90deg,#56a376,var(--orange)); }
+.debt-danger { color: #b04b4b; }
+.receivable-layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 13px; align-items: start; }
+.receivable-toolbar { flex-wrap: wrap; }
+.receivable-toolbar .segmented { margin-left: auto; }
+.receivable-side { display: grid; gap: 13px; }
+.credit-payment-list { display: grid; }
+.credit-payment-list button { min-height: 52px; padding: 11px 13px; border: 0; border-top: 1px solid #edf0ef; background: #fff; color: inherit; display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; }
+.credit-payment-list button:first-child { border-top: 0; }
+.credit-payment-list button:hover { background: #fafbf9; }
+.credit-payment-list strong { display: block; color: var(--navy); font-size: 10px; }
+.credit-payment-list small { display: block; margin-top: 2px; color: #839094; font-size: 8px; }
+.credit-payment-list span { color: #287858; font-size: 11px; font-weight: 900; }
+.credit-payment-list p { margin: 0; padding: 22px 13px; color: #839094; text-align: center; font-size: 9px; }
+.customer-payment-history { border-top: 1px solid #edf0ef; }
+.credit-payment-modal { width: min(560px, 100%); }
 .customer-detail-modal { width: min(850px, 100%); }
 .customer-picker-modal { width: min(560px, 100%); }
 .profile-modal { width: min(540px, 100%); }
@@ -549,6 +564,7 @@ td strong { color: var(--text); }
   .inventory-workbench { grid-template-columns: 1fr; }
   .sales-workbench { grid-template-columns: 1fr; }
   .customer-workbench { grid-template-columns: 1fr; }
+  .receivable-layout { grid-template-columns: 1fr; }
   .route-panel { grid-template-columns: 1fr 1fr; }
   .settings-layout { grid-template-columns: 1fr; }
   .audit-summary-grid { grid-template-columns: 1fr 1fr; }
