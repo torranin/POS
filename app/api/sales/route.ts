@@ -5,7 +5,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { getSettings, pool } from "@/lib/db";
 import { canAccess } from "@/lib/roles";
 
-const paymentLabels = { cash: "เงินสด", qr: "QR / โอนเงิน", card: "บัตรเครดิต/เดบิต" } as const;
+const paymentLabels = { cash: "เงินสด", qr: "QR / โอนเงิน", card: "เครดิต" } as const;
 
 type SaleItemInput = { productId: number; quantity: number };
 type ProductRow = RowDataPacket & { id: number; sku: string; name: string; unit: string; price: number; stock: number };
