@@ -74,13 +74,30 @@ type CustomerRecord = {
   lastOrder: string;
   status: "active" | "watch" | "inactive";
 };
+type DeliveryStatus = "รอจัดคิว" | "เตรียมสินค้า" | "กำลังจัดส่ง" | "ส่งสำเร็จ" | "ยกเลิก";
+type DeliveryRecord = {
+  id: number;
+  no: string;
+  customer: string;
+  phone: string;
+  area: string;
+  address: string;
+  time: string;
+  truck: string;
+  driver: string;
+  driverPhone: string;
+  items: number;
+  amount: number;
+  note: string;
+  status: DeliveryStatus;
+};
 
 const pageNames: Record<PageKey, string> = { pos: "ขายหน้าร้าน", products: "สินค้าและสต็อก", sales: "รายการขาย", delivery: "งานจัดส่ง", customers: "ลูกค้า", reports: "รายงานภาพรวม", settings: "ตั้งค่าระบบ", users: "จัดการผู้ใช้งาน" };
-const deliveries = [
-  { no: "DLV-0062", customer: "หจก. รุ่งเรืองก่อสร้าง", area: "มีนบุรี กทม.", time: "09:00–11:00", truck: "1ฒก 4582", status: "กำลังจัดส่ง", tone: "blue" },
-  { no: "DLV-0063", customer: "บจก. เอส.พี.โฮม", area: "ลาดกระบัง กทม.", time: "11:00–13:00", truck: "2ฒข 7109", status: "เตรียมสินค้า", tone: "orange" },
-  { no: "DLV-0064", customer: "คุณชาญชัย", area: "บางพลี สมุทรปราการ", time: "13:00–15:00", truck: "1ฒก 4582", status: "รอจัดคิว", tone: "gray" },
-  { no: "DLV-0061", customer: "ร้านช่างเอก", area: "สะพานสูง กทม.", time: "08:30", truck: "2ฒข 7109", status: "ส่งสำเร็จ", tone: "green" },
+const deliverySeeds: DeliveryRecord[] = [
+  { id: 1, no: "DLV-0062", customer: "หจก. รุ่งเรืองก่อสร้าง", phone: "081-234-5566", area: "มีนบุรี กทม.", address: "ไซต์งานถนนร่มเกล้า มีนบุรี กรุงเทพฯ", time: "09:00–11:00", truck: "1ฒก 4582", driver: "คุณวิชัย ชำนาญทาง", driverPhone: "089-123-4567", items: 12, amount: 12840, note: "โทรก่อนถึง 20 นาที", status: "กำลังจัดส่ง" },
+  { id: 2, no: "DLV-0063", customer: "บจก. เอส.พี.โฮม", phone: "089-772-1900", area: "ลาดกระบัง กทม.", address: "โครงการบ้านจัดสรร ลาดกระบัง กรุงเทพฯ", time: "11:00–13:00", truck: "2ฒข 7109", driver: "คุณสมพร ส่งไว", driverPhone: "086-222-7788", items: 28, amount: 28650, note: "เตรียมเอกสารวางบิลพร้อมสินค้า", status: "เตรียมสินค้า" },
+  { id: 3, no: "DLV-0064", customer: "คุณชาญชัย", phone: "088-440-1200", area: "บางพลี สมุทรปราการ", address: "โกดังบางพลี สมุทรปราการ", time: "13:00–15:00", truck: "1ฒก 4582", driver: "คุณวิชัย ชำนาญทาง", driverPhone: "089-123-4567", items: 6, amount: 7850, note: "รอจัดรอบร่วมกับสายบางพลี", status: "รอจัดคิว" },
+  { id: 4, no: "DLV-0061", customer: "ร้านช่างเอก", phone: "082-448-6110", area: "สะพานสูง กทม.", address: "ร้านช่างเอก สะพานสูง กรุงเทพฯ", time: "08:30", truck: "2ฒข 7109", driver: "คุณสมพร ส่งไว", driverPhone: "086-222-7788", items: 9, amount: 58350, note: "ส่งสำเร็จ ลูกค้ารับครบ", status: "ส่งสำเร็จ" },
 ];
 const customerSeeds: CustomerRecord[] = [
   { id: 1, name: "หจก. รุ่งเรืองก่อสร้าง", phone: "081-234-5566", type: "ลูกค้าประจำ", contact: "คุณมานะ", taxId: "0105566123001", address: "มีนบุรี กรุงเทพฯ", orders: 18, total: 184775, creditLimit: 80000, creditUsed: 28500, creditTerm: 30, lastOrder: "วันนี้ 13:48", status: "active" },
@@ -156,11 +173,31 @@ export default function POSDashboard({ products, categories: initialCategories, 
   const [saleRecords, setSaleRecords] = useState<SaleRecord[]>([]);
   const [salesSummary, setSalesSummary] = useState<SalesSummary>({ totalSales: 0, billCount: 0, averagePerBill: 0, cashTotal: 0 });
   const [salesPeriod, setSalesPeriod] = useState<"today" | "7days" | "month">("today");
+  const [reportPeriod, setReportPeriod] = useState<"today" | "7days" | "month">("month");
   const [salesQuery, setSalesQuery] = useState("");
   const [salesPaymentFilter, setSalesPaymentFilter] = useState<"all" | StoreSettings["defaultPaymentMethod"]>("all");
   const [salesStatusFilter, setSalesStatusFilter] = useState<"all" | SaleRecord["status"]>("all");
   const [salesLoading, setSalesLoading] = useState(false);
   const [salesReloadKey, setSalesReloadKey] = useState(0);
+  const [deliveryRecords, setDeliveryRecords] = useState<DeliveryRecord[]>(deliverySeeds);
+  const [deliverySearch, setDeliverySearch] = useState("");
+  const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<"ทั้งหมด" | DeliveryStatus>("ทั้งหมด");
+  const [selectedDelivery, setSelectedDelivery] = useState<DeliveryRecord | null>(null);
+  const [showDeliveryForm, setShowDeliveryForm] = useState(false);
+  const [deliveryDraft, setDeliveryDraft] = useState<Omit<DeliveryRecord, "id" | "no">>({
+    customer: "",
+    phone: "",
+    area: "",
+    address: "",
+    time: "",
+    truck: "1ฒก 4582",
+    driver: "คุณวิชัย ชำนาญทาง",
+    driverPhone: "089-123-4567",
+    items: 1,
+    amount: 0,
+    note: "",
+    status: "รอจัดคิว",
+  });
   const queryInputRef = useRef<HTMLInputElement>(null);
   const canManageProducts = canAccess(currentUser.role, "manage_products");
   const categoryNames = useMemo(() => ["ทั้งหมด", ...categoryList.map((item) => item.name)], [categoryList]);
@@ -172,12 +209,12 @@ export default function POSDashboard({ products, categories: initialCategories, 
     if (!categoryNames.includes(category)) setCategory("ทั้งหมด");
   }, [category, categoryNames]);
   useEffect(() => {
-    if (!["sales", "customers"].includes(activePage) || !canAccess(currentUser.role, "sales")) return;
+    if (!["sales", "customers", "reports"].includes(activePage) || !canAccess(currentUser.role, "sales")) return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setSalesLoading(true);
       try {
-        const params = new URLSearchParams({ period: activePage === "customers" ? "month" : salesPeriod });
+        const params = new URLSearchParams({ period: activePage === "customers" ? "month" : activePage === "reports" ? reportPeriod : salesPeriod });
         if (activePage === "sales" && salesQuery.trim()) params.set("q", salesQuery.trim());
         const response = await fetch(`/api/sales?${params}`, { signal: controller.signal });
         const data = await response.json();
@@ -191,7 +228,7 @@ export default function POSDashboard({ products, categories: initialCategories, 
       }
     }, 250);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [activePage, currentUser.role, salesPeriod, salesQuery, salesReloadKey]);
+  }, [activePage, currentUser.role, salesPeriod, reportPeriod, salesQuery, salesReloadKey]);
 
   const filtered = useMemo(() => inventoryProducts.filter((p) => {
     const matchesCategory = category === "ทั้งหมด" || p.category === category;
@@ -278,6 +315,34 @@ export default function POSDashboard({ products, categories: initialCategories, 
     total: completedVisibleSales.filter((sale) => sale.paymentMethod === method).reduce((sum, sale) => sum + sale.total, 0),
     count: completedVisibleSales.filter((sale) => sale.paymentMethod === method).length,
   }));
+  const reportCompletedSales = saleRecords.filter((sale) => sale.status === "completed");
+  const reportRevenue = reportCompletedSales.reduce((sum, sale) => sum + sale.total, 0);
+  const reportVat = reportCompletedSales.reduce((sum, sale) => sum + sale.vat, 0);
+  const reportDiscount = reportCompletedSales.reduce((sum, sale) => sum + sale.discount, 0);
+  const reportItemCount = reportCompletedSales.reduce((sum, sale) => sum + sale.itemCount, 0);
+  const reportAverageBill = reportCompletedSales.length ? reportRevenue / reportCompletedSales.length : 0;
+  const reportPeriodLabel = reportPeriod === "today" ? "วันนี้" : reportPeriod === "7days" ? "7 วันล่าสุด" : "เดือนนี้";
+  const reportPaymentSummary = (["cash", "qr", "card"] as const).map((method) => ({
+    method,
+    label: method === "cash" ? "เงินสด" : method === "qr" ? "QR / โอน" : "เครดิต",
+    total: reportCompletedSales.filter((sale) => sale.paymentMethod === method).reduce((sum, sale) => sum + sale.total, 0),
+    count: reportCompletedSales.filter((sale) => sale.paymentMethod === method).length,
+  }));
+  const reportDailyTotals = Array.from(reportCompletedSales.reduce((map, sale) => {
+    const date = new Date(sale.createdAt);
+    const key = date.toLocaleDateString("th-TH", { day: "numeric", month: "short" });
+    map.set(key, (map.get(key) || 0) + sale.total);
+    return map;
+  }, new Map<string, number>()).entries()).slice(-10);
+  const reportMaxDaily = Math.max(1, ...reportDailyTotals.map(([, total]) => total));
+  const reportLowStock = inventoryProducts
+    .filter((product) => product.stock <= settings.lowStockThreshold)
+    .sort((a, b) => a.stock - b.stock)
+    .slice(0, 5);
+  const reportTopCategories = categorySummary.map((item) => ({
+    ...item,
+    percent: totalInventoryValue ? Math.round((item.value / totalInventoryValue) * 100) : 0,
+  }));
   const visibleCustomers = useMemo(() => customerRecords.filter((customer) => {
     const term = customerSearch.trim().toLowerCase();
     const matchesTerm = !term || customer.name.toLowerCase().includes(term) || customer.phone.toLowerCase().includes(term) || customer.type.toLowerCase().includes(term) || customer.contact.toLowerCase().includes(term) || customer.taxId.includes(term);
@@ -299,6 +364,17 @@ export default function POSDashboard({ products, categories: initialCategories, 
   const displayedCustomerHistory = selectedCustomer ? (customerSaleHistory.length ? customerSaleHistory : [
     { id: -selectedCustomer.id, receiptNo: "MOCK-CREDIT", taxInvoiceNo: selectedCustomer.taxId ? "TAX-MOCK" : "", customerName: selectedCustomer.name, cashierName: "ระบบตัวอย่าง", createdAt: new Date().toISOString(), paymentMethod: "cash" as const, paymentLabel: "เครดิตลูกค้า", subtotal: selectedCustomer.creditUsed, discount: 0, vat: 0, rounding: 0, total: selectedCustomer.creditUsed, amountReceived: 0, changeDue: 0, itemCount: Math.max(1, selectedCustomer.orders), status: selectedCustomer.creditUsed > 0 ? "completed" as const : "voided" as const },
   ].filter((sale) => sale.total > 0)) : [];
+  const deliveryTone = (status: DeliveryStatus) => status === "กำลังจัดส่ง" ? "blue" : status === "เตรียมสินค้า" ? "orange" : status === "ส่งสำเร็จ" ? "green" : status === "ยกเลิก" ? "danger" : "gray";
+  const visibleDeliveries = useMemo(() => deliveryRecords.filter((delivery) => {
+    const term = deliverySearch.trim().toLowerCase();
+    const matchesTerm = !term || delivery.no.toLowerCase().includes(term) || delivery.customer.toLowerCase().includes(term) || delivery.phone.includes(term) || delivery.area.toLowerCase().includes(term) || delivery.truck.toLowerCase().includes(term) || delivery.driver.toLowerCase().includes(term);
+    const matchesStatus = deliveryStatusFilter === "ทั้งหมด" || delivery.status === deliveryStatusFilter;
+    return matchesTerm && matchesStatus;
+  }), [deliveryRecords, deliverySearch, deliveryStatusFilter]);
+  const activeDeliveries = deliveryRecords.filter((delivery) => ["รอจัดคิว","เตรียมสินค้า","กำลังจัดส่ง"].includes(delivery.status));
+  const completedDeliveries = deliveryRecords.filter((delivery) => delivery.status === "ส่งสำเร็จ");
+  const deliveryDrivers = [...new Set(deliveryRecords.map((delivery) => delivery.driver))];
+  const selectedDeliveryDriver = deliveryRecords.find((delivery) => delivery.status === "กำลังจัดส่ง") || deliveryRecords[0];
 
   function addToCart(product: Product) {
     if (product.stock <= 0) {
@@ -544,6 +620,61 @@ export default function POSDashboard({ products, categories: initialCategories, 
     setShowCustomerPicker(false);
     setPosCustomerSearch("");
   }
+  function openDeliveryForm(customer?: CustomerRecord) {
+    setActionError("");
+    setDeliveryDraft({
+      customer: customer?.name ?? "",
+      phone: customer?.phone ?? "",
+      area: customer?.address || "",
+      address: customer?.address || "",
+      time: "",
+      truck: "1ฒก 4582",
+      driver: "คุณวิชัย ชำนาญทาง",
+      driverPhone: "089-123-4567",
+      items: 1,
+      amount: 0,
+      note: "",
+      status: "รอจัดคิว",
+    });
+    setShowDeliveryForm(true);
+  }
+  function saveDelivery(event: React.FormEvent) {
+    event.preventDefault();
+    const customer = deliveryDraft.customer.trim();
+    const address = deliveryDraft.address.trim();
+    if (!customer || !address || !deliveryDraft.time.trim()) {
+      setActionError("กรุณากรอกลูกค้า ที่อยู่ และช่วงเวลาจัดส่ง");
+      return;
+    }
+    const nextId = Math.max(0, ...deliveryRecords.map((delivery) => delivery.id)) + 1;
+    const nextNo = `DLV-${String(60 + nextId).padStart(4, "0")}`;
+    const payload: DeliveryRecord = {
+      id: nextId,
+      no: nextNo,
+      ...deliveryDraft,
+      customer,
+      address,
+      area: deliveryDraft.area.trim() || address,
+      phone: deliveryDraft.phone.trim(),
+      time: deliveryDraft.time.trim(),
+      items: Math.max(1, Math.floor(Number(deliveryDraft.items) || 1)),
+      amount: Math.max(0, Number(deliveryDraft.amount) || 0),
+      note: deliveryDraft.note.trim(),
+    };
+    setDeliveryRecords((items) => [payload, ...items]);
+    setShowDeliveryForm(false);
+    setSelectedDelivery(payload);
+    setActionError("");
+  }
+  function updateDeliveryStatus(delivery: DeliveryRecord, status: DeliveryStatus) {
+    setDeliveryRecords((items) => items.map((item) => item.id === delivery.id ? { ...item, status } : item));
+    setSelectedDelivery((current) => current?.id === delivery.id ? { ...current, status } : current);
+  }
+  function removeDelivery(delivery: DeliveryRecord) {
+    if (!window.confirm(`ยืนยันการลบงานจัดส่ง ${delivery.no}?`)) return;
+    setDeliveryRecords((items) => items.filter((item) => item.id !== delivery.id));
+    setSelectedDelivery((current) => current?.id === delivery.id ? null : current);
+  }
 
   const navItems = ([
     { key: "pos", label: "ขายสินค้า", icon: <ShoppingCart />, show: true },
@@ -627,9 +758,20 @@ export default function POSDashboard({ products, categories: initialCategories, 
         </div>}
 
         {activePage === "delivery" && <div className="page-content">
-          <div className="page-actions"><div><p>วางแผนคิวรถและติดตามสถานะการจัดส่ง</p></div><button className="outline-action"><MapPin size={17}/> ดูแผนที่</button><button className="primary-action"><Plus size={17}/> สร้างงานจัดส่ง</button></div>
-          <div className="metrics"><Metric label="งานวันนี้" value="8 งาน" note="จัดส่งแล้ว 3 งาน" icon={<Truck/>}/><Metric label="กำลังจัดส่ง" value="2 คัน" note="รถพร้อมใช้งาน 1 คัน" icon={<MapPin/>} tone="blue"/><Metric label="รอจัดคิว" value="3 งาน" note="ต้องจัดก่อน 15:00" icon={<ClipboardList/>} tone="orange"/><Metric label="ตรงเวลา" value="96%" note="เฉลี่ย 42 นาที / งาน" icon={<PackageCheck/>} tone="green"/></div>
-          <div className="delivery-layout"><section className="data-panel delivery-list"><div className="panel-title"><div><h2>คิวจัดส่งวันนี้</h2><p>วันอังคารที่ 11 สิงหาคม 2569</p></div><span>4 งาน</span></div>{deliveries.map((d,i)=><article className="delivery-card" key={d.no}><span className={`route-dot ${d.tone}`}>{i+1}</span><div className="delivery-main"><div><strong>{d.no} · {d.customer}</strong><span className={`status-chip ${d.tone}`}>{d.status}</span></div><p><MapPin size={14}/> {d.area} <span>•</span> {d.time}</p><small><Truck size={13}/> ทะเบียน {d.truck}</small></div><button className="icon-button"><ChevronDown size={16}/></button></article>)}</section><aside className="route-panel"><div className="map-mock"><MapPin size={32}/><strong>แผนที่เส้นทาง</strong><small>3 จุดส่ง · 42.8 กม.</small><div className="route-line"><i/><i/><i/></div></div><div className="driver-card"><CircleUserRound size={38}/><div><strong>คุณวิชัย ชำนาญทาง</strong><small>คนขับรถ · คันที่ 1</small><span><Phone size={12}/> 089-123-4567</span></div></div></aside></div>
+          <div className="page-actions"><div><p>วางแผนคิวรถ สร้างงานจัดส่ง และติดตามสถานะปลายทาง</p></div><button className="outline-action"><MapPin size={17}/> ดูแผนที่</button><button className="primary-action" onClick={()=>openDeliveryForm()}><Plus size={17}/> สร้างงานจัดส่ง</button></div>
+          <div className="metrics"><Metric label="งานทั้งหมด" value={`${deliveryRecords.length} งาน`} note={`${completedDeliveries.length} งานส่งสำเร็จ`} icon={<Truck/>}/><Metric label="กำลังจัดส่ง" value={`${deliveryRecords.filter(d=>d.status==="กำลังจัดส่ง").length} งาน`} note={`${deliveryDrivers.length} คนขับในระบบ`} icon={<MapPin/>} tone="blue"/><Metric label="รอ/เตรียมสินค้า" value={`${deliveryRecords.filter(d=>d.status==="รอจัดคิว"||d.status==="เตรียมสินค้า").length} งาน`} note="ต้องจัดรอบและตรวจสินค้า" icon={<ClipboardList/>} tone="orange"/><Metric label="มูลค่าส่งวันนี้" value={formatMoney(deliveryRecords.reduce((sum,d)=>sum+d.amount,0))} note={`${activeDeliveries.length} งานยังเปิดอยู่`} icon={<PackageCheck/>} tone="green"/></div>
+          <div className="delivery-layout">
+            <section className="data-panel delivery-list">
+              <div className="panel-toolbar delivery-toolbar"><label className="table-search"><Search size={17}/><input value={deliverySearch} onChange={event=>setDeliverySearch(event.target.value)} placeholder="ค้นหาเลขงาน ลูกค้า พื้นที่ คนขับ หรือทะเบียนรถ"/></label><div className="segmented delivery-status-filter">{(["ทั้งหมด","รอจัดคิว","เตรียมสินค้า","กำลังจัดส่ง","ส่งสำเร็จ"] as const).map(status=><button key={status} className={deliveryStatusFilter===status?"active":""} onClick={()=>setDeliveryStatusFilter(status)}>{status}</button>)}</div></div>
+              {actionError&&<div className="table-error">{actionError}</div>}
+              <div className="delivery-card-list">{visibleDeliveries.map((delivery,index)=><article className="delivery-card" key={delivery.id}><span className={`route-dot ${deliveryTone(delivery.status)}`}>{index+1}</span><div className="delivery-main"><div><strong>{delivery.no} · {delivery.customer}</strong><span className={`status-chip ${deliveryTone(delivery.status)}`}>{delivery.status}</span></div><p><MapPin size={14}/> {delivery.area} <span>•</span> {delivery.time}</p><small><Truck size={13}/> {delivery.truck} · {delivery.driver} · {delivery.items} รายการ · {formatMoney(delivery.amount)}</small></div><div className="row-actions"><button className="table-action" onClick={()=>setSelectedDelivery(delivery)}>รายละเอียด</button><button className="icon-button danger-button" aria-label="ลบงานจัดส่ง" onClick={()=>removeDelivery(delivery)}><Trash2 size={15}/></button></div></article>)}{visibleDeliveries.length===0&&<div className="empty-table">ไม่พบงานจัดส่งตามเงื่อนไขนี้</div>}</div>
+            </section>
+            <aside className="route-panel">
+              <div className="map-mock"><MapPin size={32}/><strong>แผนที่เส้นทาง</strong><small>{activeDeliveries.length} จุดส่งที่ยังเปิดอยู่ · 42.8 กม.</small><div className="route-line"><i/><i/><i/></div></div>
+              <div className="driver-card"><CircleUserRound size={38}/><div><strong>{selectedDeliveryDriver?.driver || "ยังไม่มีคนขับ"}</strong><small>{selectedDeliveryDriver?.truck || "ไม่มีรถที่กำลังใช้งาน"}</small><span><Phone size={12}/> {selectedDeliveryDriver?.driverPhone || "-"}</span></div></div>
+              <section className="delivery-status-board">{(["รอจัดคิว","เตรียมสินค้า","กำลังจัดส่ง","ส่งสำเร็จ"] as const).map(status=><button key={status} onClick={()=>setDeliveryStatusFilter(status)}><span className={`route-dot ${deliveryTone(status)}`}>{deliveryRecords.filter(d=>d.status===status).length}</span><strong>{status}</strong></button>)}</section>
+            </aside>
+          </div>
         </div>}
 
         {activePage === "customers" && <div className="page-content">
@@ -649,9 +791,11 @@ export default function POSDashboard({ products, categories: initialCategories, 
         </div>}
 
         {activePage === "reports" && <div className="page-content">
-          <div className="page-actions"><div><p>ข้อมูลสรุประหว่างวันที่ 1–11 สิงหาคม 2569</p></div><button className="outline-action"><FileText size={17}/> ส่งออก PDF</button><button className="primary-action"><Printer size={17}/> พิมพ์รายงาน</button></div>
-          <div className="metrics"><Metric label="ยอดขายสุทธิ" value="฿486,250" note="เพิ่มขึ้น 18.4% จากเดือนก่อน" icon={<BarChart3/>}/><Metric label="กำไรขั้นต้น" value="฿127,480" note="คิดเป็น 26.2%" icon={<WalletCards/>} tone="blue"/><Metric label="จำนวนรายการ" value="426 บิล" note="เฉลี่ย 38 บิล / วัน" icon={<ReceiptText/>} tone="orange"/><Metric label="ลูกค้าใหม่" value="34 ราย" note="เพิ่มขึ้น 8 ราย" icon={<CircleUserRound/>} tone="green"/></div>
-          <div className="report-grid"><section className="data-panel chart-panel"><div className="panel-title"><div><h2>ยอดขายรายวัน</h2><p>ยอดขายรวม ฿486,250</p></div><div className="legend"><i/> ยอดขาย</div></div><div className="bar-chart">{[42,56,48,70,64,82,58,76,92,68,86].map((h,i)=><div key={i}><span style={{height:`${h}%`}}/><small>{i+1} ส.ค.</small></div>)}</div></section><section className="data-panel category-report"><div className="panel-title"><div><h2>ยอดขายตามหมวดหมู่</h2><p>5 อันดับแรก</p></div></div>{[["ปูนและซีเมนต์",38,"฿184,775"],["เหล็ก",26,"฿126,425"],["สีและเคมีภัณฑ์",16,"฿77,800"],["อิฐและบล็อก",12,"฿58,350"],["ประปา",8,"฿38,900"]].map(([name,pct,value])=><div className="category-stat" key={name as string}><div><strong>{name}</strong><span>{value}</span></div><div><i style={{width:`${pct}%`}}/></div><small>{pct}%</small></div>)}</section></div>
+          <div className="page-actions"><div><p>รายงานภาพรวม {reportPeriodLabel} จากรายการขาย สต็อก และลูกค้าในระบบ</p></div><div className="segmented"><button className={reportPeriod==="today"?"active":""} onClick={()=>setReportPeriod("today")}>วันนี้</button><button className={reportPeriod==="7days"?"active":""} onClick={()=>setReportPeriod("7days")}>7 วัน</button><button className={reportPeriod==="month"?"active":""} onClick={()=>setReportPeriod("month")}>เดือนนี้</button></div><button className="outline-action"><FileText size={17}/> ส่งออก PDF</button><button className="primary-action"><Printer size={17}/> พิมพ์รายงาน</button></div>
+          <div className="metrics"><Metric label="ยอดขายสุทธิ" value={formatMoney(reportRevenue)} note={`${reportCompletedSales.length} บิลสำเร็จ · เฉลี่ย ${formatMoney(reportAverageBill)}`} icon={<BarChart3/>}/><Metric label="VAT / ส่วนลด" value={`${formatMoney(reportVat)} / ${formatMoney(reportDiscount)}`} note={`ยอดตามช่วง ${reportPeriodLabel}`} icon={<FileText/>} tone="blue"/><Metric label="จำนวนสินค้าในบิล" value={`${reportItemCount.toLocaleString("th-TH")} ชิ้น`} note="รวมจากบิลขายที่สำเร็จ" icon={<ReceiptText/>} tone="orange"/><Metric label="มูลค่าสต็อก" value={formatMoney(totalInventoryValue)} note={`${lowStock} รายการใกล้หมด · ${outOfStock} รายการหมด`} icon={<Boxes/>} tone="green"/></div>
+          <div className="report-grid"><section className="data-panel chart-panel"><div className="panel-title"><div><h2>ยอดขายรายวัน</h2><p>ยอดขายรวม {formatMoney(reportRevenue)}</p></div><div className="legend"><i/> ยอดขาย</div></div><div className="bar-chart">{reportDailyTotals.length ? reportDailyTotals.map(([label,total])=><div key={label}><span title={formatMoney(total)} style={{height:`${Math.max(6, Math.round((total/reportMaxDaily)*100))}%`}}/><small>{label}</small></div>) : <div className="report-empty-chart"><span style={{height:"6%"}}/><small>ไม่มีข้อมูล</small></div>}</div></section><section className="data-panel category-report"><div className="panel-title"><div><h2>มูลค่าสต็อกตามหมวด</h2><p>5 อันดับแรก</p></div></div>{reportTopCategories.map((item)=><div className="category-stat" key={item.id}><div><strong>{item.name}</strong><span>{formatMoney(item.value)}</span></div><div><i style={{width:`${Math.max(4,item.percent)}%`}}/></div><small>{item.percent}% · {item.stock.toLocaleString("th-TH")} หน่วย</small></div>)}{reportTopCategories.length===0&&<div className="empty-table">ยังไม่มีข้อมูลหมวดสินค้า</div>}</section></div>
+          <div className="sales-workbench report-workbench"><section className="sales-card"><div className="sales-card-title"><span><WalletCards size={18}/></span><div><h2>แยกตามวิธีชำระ</h2><p>เงินสด QR/โอน และเครดิต</p></div></div><div className="payment-summary-list">{reportPaymentSummary.map((item)=><button key={item.method}><div><strong>{item.label}</strong><small>{item.count} บิล</small></div><span>{formatMoney(item.total)}</span></button>)}</div></section><section className="sales-card"><div className="sales-card-title"><span><PackageSearch size={18}/></span><div><h2>สินค้าใกล้หมด</h2><p>อ้างอิงจุดเตือนในตั้งค่าระบบ</p></div></div><div className="inventory-alert-list">{reportLowStock.map((product)=><article key={product.id}><div><strong>{product.name}</strong><small>{product.sku} · {product.category}</small></div><span className={product.stock<=0?"danger":""}>{product.stock.toLocaleString("th-TH")} {product.unit}</span><button className="table-action" onClick={()=>{setInventorySearch(product.sku);setActivePage("products")}}>ดูสต็อก</button></article>)}{reportLowStock.length===0&&<p>ไม่มีสินค้าใกล้หมด</p>}</div></section></div>
+          <section className="data-panel"><div className="panel-title"><div><h2>รายการขายล่าสุดในรายงาน</h2><p>{salesLoading ? "กำลังโหลดข้อมูล..." : `${saleRecords.length} รายการในช่วง ${reportPeriodLabel}`}</p></div></div><div className="table-scroll"><table><thead><tr><th>เลขที่บิล</th><th>วันเวลา</th><th>ลูกค้า</th><th>ชำระโดย</th><th>สินค้า</th><th>VAT</th><th>ยอดสุทธิ</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>{saleRecords.slice(0,10).map((sale)=><tr key={sale.id}><td><button className="sale-link" onClick={()=>viewSale(sale.id)}>{sale.receiptNo}</button></td><td>{new Date(sale.createdAt).toLocaleString("th-TH",{dateStyle:"short",timeStyle:"short"})}</td><td>{sale.customerName}</td><td>{sale.paymentLabel}</td><td>{sale.itemCount} ชิ้น</td><td>{formatMoney(sale.vat)}</td><td><strong>{formatMoney(sale.total)}</strong></td><td><span className={`status-chip ${sale.status==="completed"?"success":sale.status==="refunded"?"warning":"danger"}`}>{sale.status==="completed"?"สำเร็จ":sale.status==="refunded"?"คืนเงิน":"ยกเลิก"}</span></td><td><button className="table-action" onClick={()=>viewSale(sale.id)}>ดูใบเสร็จ</button></td></tr>)}</tbody></table></div>{!salesLoading&&saleRecords.length===0&&<div className="empty-table">ยังไม่มีรายการขายในช่วงเวลานี้</div>}</section>
         </div>}
 
         {activePage === "users" && currentUser.role === "admin" && <div className="page-content">
@@ -738,6 +882,10 @@ export default function POSDashboard({ products, categories: initialCategories, 
         </div>}
 
         {showCustomerPicker && <div className="modal-backdrop" role="presentation" onMouseDown={()=>setShowCustomerPicker(false)}><section className="app-modal customer-picker-modal" onMouseDown={e=>e.stopPropagation()}><div className="modal-title"><div><h2>เลือกลูกค้า</h2><p>ค้นหาจากชื่อลูกค้า เบอร์โทร ผู้ติดต่อ หรือเลขภาษี</p></div><button type="button" onClick={()=>setShowCustomerPicker(false)}><X/></button></div><label className="customer-picker-search"><Search size={18}/><input autoFocus value={posCustomerSearch} onChange={e=>setPosCustomerSearch(e.target.value)} onKeyDown={e=>{ if(e.key==="Enter" && posCustomerMatches[0]) { e.preventDefault(); choosePosCustomer(posCustomerMatches[0].name); } }} placeholder="พิมพ์ชื่อลูกค้า เช่น รุ่งเรือง, เอส.พี.โฮม, เบอร์โทร..." /></label><div className="customer-picker-list"><button className={customerName==="ลูกค้าทั่วไป"?"active":""} onClick={()=>choosePosCustomer("ลูกค้าทั่วไป")}><span><CircleUserRound size={20}/></span><div><strong>ลูกค้าทั่วไป</strong><small>ขายแบบไม่ผูกประวัติลูกค้า</small></div><i>เลือก</i></button>{posCustomerMatches.map(customer=>{ const creditRemain = Math.max(0, customer.creditLimit - customer.creditUsed); return <button key={customer.id} className={customerName===customer.name?"active":""} onClick={()=>choosePosCustomer(customer.name)}><span><CircleUserRound size={20}/></span><div><strong>{customer.name}</strong><small>{customer.phone} · {customer.contact || customer.type} · เครดิตคงเหลือ {formatMoney(creditRemain)}</small></div><i>เลือก</i></button>})}{posCustomerMatches.length===0&&<div className="empty-table">ไม่พบลูกค้าที่ค้นหา</div>}</div><div className="modal-actions"><button type="button" className="outline-action" onClick={()=>openCustomerForm()}><Plus size={16}/> เพิ่มลูกค้าใหม่</button><button type="button" className="primary-action" onClick={()=>choosePosCustomer(posCustomerSearch)} disabled={!posCustomerSearch.trim()}><Save size={16}/> ใช้ชื่อนี้ในบิล</button></div></section></div>}
+
+        {selectedDelivery && <div className="modal-backdrop" role="presentation" onMouseDown={()=>setSelectedDelivery(null)}><section className="app-modal delivery-detail-modal" onMouseDown={e=>e.stopPropagation()}><div className="modal-title"><div><h2>{selectedDelivery.no} · {selectedDelivery.customer}</h2><p>{selectedDelivery.area} · {selectedDelivery.time} · {selectedDelivery.truck}</p></div><button type="button" onClick={()=>setSelectedDelivery(null)}><X/></button></div><div className="delivery-detail-grid"><article><span>สถานะ</span><strong><span className={`status-chip ${deliveryTone(selectedDelivery.status)}`}>{selectedDelivery.status}</span></strong></article><article><span>มูลค่าสินค้า</span><strong>{formatMoney(selectedDelivery.amount)}</strong></article><article><span>จำนวนรายการ</span><strong>{selectedDelivery.items} รายการ</strong></article><article><span>เบอร์ลูกค้า</span><strong>{selectedDelivery.phone || "-"}</strong></article></div><div className="delivery-detail-body"><section><h3>ปลายทาง</h3><p><MapPin size={15}/> {selectedDelivery.address}</p><small>{selectedDelivery.note || "ไม่มีหมายเหตุเพิ่มเติม"}</small></section><section><h3>รถและคนขับ</h3><p><Truck size={15}/> {selectedDelivery.truck} · {selectedDelivery.driver}</p><small><Phone size={13}/> {selectedDelivery.driverPhone}</small></section></div><div className="delivery-status-actions">{(["รอจัดคิว","เตรียมสินค้า","กำลังจัดส่ง","ส่งสำเร็จ","ยกเลิก"] as const).map(status=><button key={status} className={selectedDelivery.status===status?"active":""} onClick={()=>updateDeliveryStatus(selectedDelivery,status)}>{status}</button>)}</div><div className="modal-actions"><button type="button" className="outline-action" onClick={()=>setSelectedDelivery(null)}>ปิด</button><button type="button" className="primary-action" onClick={()=>{setCustomerName(selectedDelivery.customer);setSelectedDelivery(null);setActivePage("pos")}}><Plus size={16}/> เปิดบิลลูกค้านี้</button></div></section></div>}
+
+        {showDeliveryForm && <div className="modal-backdrop" role="presentation" onMouseDown={()=>setShowDeliveryForm(false)}><form className="app-modal delivery-form-modal" onSubmit={saveDelivery} onMouseDown={e=>e.stopPropagation()}><div className="modal-title"><div><h2>สร้างงานจัดส่ง</h2><p>กรอกข้อมูลลูกค้า ปลายทาง ช่วงเวลา และรถจัดส่ง</p></div><button type="button" onClick={()=>setShowDeliveryForm(false)}><X/></button></div>{actionError&&<div className="login-error">{actionError}</div>}<div className="form-grid"><label>ลูกค้า <em>*</em><input required value={deliveryDraft.customer} onChange={e=>setDeliveryDraft({...deliveryDraft,customer:e.target.value})}/></label><label>เบอร์โทร<input type="tel" value={deliveryDraft.phone} onChange={e=>setDeliveryDraft({...deliveryDraft,phone:e.target.value})}/></label><label>พื้นที่/เขต<input value={deliveryDraft.area} onChange={e=>setDeliveryDraft({...deliveryDraft,area:e.target.value})}/></label><label>ช่วงเวลาจัดส่ง <em>*</em><input required placeholder="เช่น 13:00–15:00" value={deliveryDraft.time} onChange={e=>setDeliveryDraft({...deliveryDraft,time:e.target.value})}/></label><label>ทะเบียนรถ<select value={deliveryDraft.truck} onChange={e=>setDeliveryDraft({...deliveryDraft,truck:e.target.value})}><option value="1ฒก 4582">1ฒก 4582</option><option value="2ฒข 7109">2ฒข 7109</option><option value="3ฒค 2240">3ฒค 2240</option></select></label><label>คนขับ<select value={deliveryDraft.driver} onChange={e=>setDeliveryDraft({...deliveryDraft,driver:e.target.value,driverPhone:e.target.value==="คุณสมพร ส่งไว"?"086-222-7788":"089-123-4567"})}><option value="คุณวิชัย ชำนาญทาง">คุณวิชัย ชำนาญทาง</option><option value="คุณสมพร ส่งไว">คุณสมพร ส่งไว</option></select></label><label>จำนวนรายการ<input type="number" min="1" value={deliveryDraft.items} onChange={e=>setDeliveryDraft({...deliveryDraft,items:Number(e.target.value)})}/></label><label>มูลค่าสินค้า<input type="number" min="0" step="0.01" value={deliveryDraft.amount} onChange={e=>setDeliveryDraft({...deliveryDraft,amount:Number(e.target.value)})}/></label><label className="span-2">ที่อยู่ปลายทาง <em>*</em><textarea required rows={3} value={deliveryDraft.address} onChange={e=>setDeliveryDraft({...deliveryDraft,address:e.target.value})}/></label><label className="span-2">หมายเหตุ<textarea rows={2} value={deliveryDraft.note} onChange={e=>setDeliveryDraft({...deliveryDraft,note:e.target.value})}/></label></div><div className="modal-actions"><button type="button" className="outline-action" onClick={()=>setShowDeliveryForm(false)}>ยกเลิก</button><button className="primary-action"><Save size={16}/> บันทึกงานจัดส่ง</button></div></form></div>}
 
         {showReceipt && receipt && <div className="modal-backdrop receipt-backdrop" role="presentation" onMouseDown={() => setShowReceipt(false)}>
           <section className="app-modal receipt-modal" onMouseDown={(event) => event.stopPropagation()}>

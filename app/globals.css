@@ -288,6 +288,9 @@ td strong { color: var(--text); }
 .panel-title p { margin: 0; color: var(--muted); font-size: 9px; }
 .panel-title > span { color: var(--muted); font-size: 9px; }
 .delivery-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 15px; }
+.delivery-toolbar { flex-wrap: wrap; }
+.delivery-status-filter { margin-left: auto; }
+.delivery-card-list { display: grid; }
 .delivery-card { padding: 15px 17px; display: grid; grid-template-columns: 31px 1fr 31px; align-items: center; gap: 12px; border-bottom: 1px solid #edf0ef; }
 .delivery-card:last-child { border: 0; }
 .route-dot { width: 29px; height: 29px; border-radius: 50%; display: grid; place-items: center; font-size: 9px; font-weight: 800; color: #6b7b7e; background: #edf0f0; }
@@ -312,6 +315,23 @@ td strong { color: var(--text); }
 .driver-card > svg { color: var(--navy-2); }
 .driver-card div { display: grid; }
 .driver-card strong { font-size: 10px; }.driver-card small { color: #8a9597; font-size: 8px; }.driver-card span { margin-top: 5px; color: #397895; font-size: 8px; display: flex; gap: 4px; align-items: center; }
+.delivery-status-board { border: 1px solid #e1e6e4; border-radius: 13px; background: #fff; overflow: hidden; }
+.delivery-status-board button { width: 100%; min-height: 48px; padding: 9px 12px; border: 0; border-top: 1px solid #edf0ef; background: #fff; display: flex; align-items: center; gap: 10px; text-align: left; }
+.delivery-status-board button:first-child { border-top: 0; }
+.delivery-status-board button:hover { background: #fafbf9; }
+.delivery-status-board strong { color: var(--navy); font-size: 10px; }
+.delivery-detail-modal, .delivery-form-modal { width: min(760px, 100%); }
+.delivery-detail-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.delivery-detail-grid article { padding: 13px; border: 1px solid #e2e6e4; border-radius: 10px; background: #fafbf9; display: grid; gap: 4px; }
+.delivery-detail-grid span { color: #7d898c; font-size: 8px; font-weight: 800; }
+.delivery-detail-grid strong { color: var(--navy); font-size: 12px; }
+.delivery-detail-body { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.delivery-detail-body section { padding: 14px; border: 1px solid #e2e6e4; border-radius: 10px; background: #fff; display: grid; gap: 7px; }
+.delivery-detail-body h3 { margin: 0; color: var(--navy); font-size: 11px; }
+.delivery-detail-body p, .delivery-detail-body small { margin: 0; color: #657479; font-size: 9px; display: flex; align-items: center; gap: 6px; }
+.delivery-status-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+.delivery-status-actions button { height: 34px; padding: 0 11px; border: 1px solid #dce2e0; border-radius: 8px; background: #fff; color: #627379; font-size: 9px; font-weight: 800; }
+.delivery-status-actions button.active { border-color: var(--orange); background: #fff3eb; color: var(--orange-dark); }
 .report-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, .8fr); gap: 15px; }
 .legend { color: #758285; font-size: 8px; }.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 3px; background: var(--orange); margin-right: 4px; }
 .bar-chart { height: 275px; padding: 28px 21px 16px; display: flex; align-items: flex-end; justify-content: space-between; gap: 9px; background: repeating-linear-gradient(to bottom, #fff 0, #fff 54px, #eef0ef 55px); }
@@ -504,6 +524,10 @@ td strong { color: var(--text); }
   .customer-profile-body > div { border-left: 0; }
   .credit-summary-grid { grid-template-columns: 1fr; }
   .route-panel { grid-template-columns: 1fr; }
+  .delivery-status-filter { margin-left: 0; overflow-x: auto; width: 100%; }
+  .delivery-card { grid-template-columns: 31px 1fr; }
+  .delivery-card > .row-actions { grid-column: 2; }
+  .delivery-detail-grid, .delivery-detail-body { grid-template-columns: 1fr; }
   .settings-nav { grid-template-columns: 1fr 1fr; }
   .form-grid { grid-template-columns: 1fr; }.form-grid label.span-2 { grid-column: auto; }
   .category-manage-form { grid-template-columns: 1fr; }
