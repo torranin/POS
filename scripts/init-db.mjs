@@ -38,11 +38,19 @@ await connection.query(`
   CREATE TABLE IF NOT EXISTS sales (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     receipt_no VARCHAR(40) NOT NULL UNIQUE,
+    tax_invoice_no VARCHAR(40) NULL,
+    customer_name VARCHAR(120) NOT NULL DEFAULT 'ลูกค้าทั่วไป',
+    cashier_id INT NULL,
+    cashier_name VARCHAR(120) NOT NULL DEFAULT '',
     subtotal DECIMAL(12,2) NOT NULL,
     discount DECIMAL(12,2) NOT NULL DEFAULT 0,
     vat DECIMAL(12,2) NOT NULL DEFAULT 0,
+    rounding DECIMAL(12,2) NOT NULL DEFAULT 0,
     total DECIMAL(12,2) NOT NULL,
+    amount_received DECIMAL(12,2) NOT NULL DEFAULT 0,
+    change_due DECIMAL(12,2) NOT NULL DEFAULT 0,
     payment_method ENUM('cash','card','qr') NOT NULL,
+    status ENUM('completed','voided','refunded') NOT NULL DEFAULT 'completed',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
   CREATE TABLE IF NOT EXISTS sale_items (

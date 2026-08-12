@@ -7,7 +7,7 @@ import {
   ReceiptText, RotateCcw, Save, Search, Settings, ShoppingCart, SlidersHorizontal,
   Store, Trash2, Truck, UserCog, WalletCards, Wifi, X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Product, ProductCategory, StoreSettings } from "@/lib/db";
 import type { CurrentUser } from "@/lib/auth";
 import { canAccess, roleLabels, type UserRole } from "@/lib/roles";
@@ -32,18 +32,34 @@ type ReceiptData = {
   vat: number;
   rounding: number;
   total: number;
+  amountReceived: number;
+  changeDue: number;
+  status: "completed" | "voided" | "refunded";
   settings: StoreSettings;
   items: ReceiptItem[];
 };
+type SaleRecord = {
+  id: number;
+  receiptNo: string;
+  taxInvoiceNo: string;
+  customerName: string;
+  cashierName: string;
+  createdAt: string;
+  paymentMethod: StoreSettings["defaultPaymentMethod"];
+  paymentLabel: string;
+  subtotal: number;
+  discount: number;
+  vat: number;
+  rounding: number;
+  total: number;
+  amountReceived: number;
+  changeDue: number;
+  itemCount: number;
+  status: "completed" | "voided" | "refunded";
+};
+type SalesSummary = { totalSales: number; billCount: number; averagePerBill: number; cashTotal: number };
 
 const pageNames: Record<PageKey, string> = { pos: "ขายหน้าร้าน", products: "สินค้าและสต็อก", sales: "รายการขาย", delivery: "งานจัดส่ง", customers: "ลูกค้า", reports: "รายงานภาพรวม", settings: "ตั้งค่าระบบ", users: "จัดการผู้ใช้งาน" };
-const sales = [
-  { no: "POS-0826", time: "14:32", customer: "ลูกค้าทั่วไป", items: 3, payment: "เงินสด", total: 1856.35, status: "สำเร็จ" },
-  { no: "POS-0825", time: "13:48", customer: "หจก. รุ่งเรืองก่อสร้าง", items: 12, payment: "โอน / QR", total: 12840, status: "สำเร็จ" },
-  { no: "POS-0824", time: "11:05", customer: "คุณสมชาย ใจดี", items: 5, payment: "บัตรเครดิต", total: 4237.20, status: "สำเร็จ" },
-  { no: "POS-0823", time: "10:16", customer: "บจก. เอส.พี.โฮม", items: 28, payment: "เงินสด", total: 28650, status: "รอชำระ" },
-  { no: "POS-0822", time: "09:42", customer: "คุณวรรณา มีสุข", items: 2, payment: "โอน / QR", total: 962.50, status: "ยกเลิก" },
-];
 const deliveries = [
   { no: "DLV-0062", customer: "หจก. รุ่งเรืองก่อสร้าง", area: "มีนบุรี กทม.", time: "09:00–11:00", truck: "1ฒก 4582", status: "กำลังจัดส่ง", tone: "blue" },
   { no: "DLV-0063", customer: "บจก. เอส.พี.โฮม", area: "ลาดกระบัง กทม.", time: "11:00–13:00", truck: "2ฒข 7109", status: "เตรียมสินค้า", tone: "orange" },
@@ -75,20 +91,23 @@ export default function POSDashboard({ products, categories: initialCategories, 
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("ทั้งหมด");
   const [categoryList, setCategoryList] = useState<ProductCategory[]>(initialCategories);
-  const [cart, setCart] = useState<CartItem[]>(() => products.slice(0, 2).map((p, i) => ({ ...p, qty: i + 1 })));
-  const [discount, setDiscount] = useState(50);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [discount, setDiscount] = useState(0);
   const [settings, setSettings] = useState(initialSettings);
   const [savedSettings, setSavedSettings] = useState(initialSettings);
   const [paymentMethod, setPaymentMethod] = useState<StoreSettings["defaultPaymentMethod"]>(initialSettings.defaultPaymentMethod);
   const [customerName, setCustomerName] = useState("ลูกค้าทั่วไป");
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [showReceipt, setShowReceipt] = useState(false);
+  const [showPayment, setShowPayment] = useState(false);
+  const [amountReceived, setAmountReceived] = useState("");
   const [checkoutState, setCheckoutState] = useState<"idle" | "saving" | "error">("idle");
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("store");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [inventoryProducts, setInventoryProducts] = useState(products);
   const [inventorySearch, setInventorySearch] = useState("");
   const [inventoryCategory, setInventoryCategory] = useState("ทั้งหมด");
+  const [inventoryStatus, setInventoryStatus] = useState<"all" | "ready" | "low" | "out">("all");
   const [showProductForm, setShowProductForm] = useState(false);
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
   const [productDraft, setProductDraft] = useState({ sku: "", name: "", category: initialCategories[0]?.name ?? "", unit: "ชิ้น", price: 0, stock: 0 });
@@ -98,6 +117,15 @@ export default function POSDashboard({ products, categories: initialCategories, 
   const [showUserForm, setShowUserForm] = useState(false);
   const [userDraft, setUserDraft] = useState<{username:string;displayName:string;password:string;role:UserRole}>({ username: "", displayName: "", password: "", role: "user" });
   const [actionError, setActionError] = useState("");
+  const [saleRecords, setSaleRecords] = useState<SaleRecord[]>([]);
+  const [salesSummary, setSalesSummary] = useState<SalesSummary>({ totalSales: 0, billCount: 0, averagePerBill: 0, cashTotal: 0 });
+  const [salesPeriod, setSalesPeriod] = useState<"today" | "7days" | "month">("today");
+  const [salesQuery, setSalesQuery] = useState("");
+  const [salesPaymentFilter, setSalesPaymentFilter] = useState<"all" | StoreSettings["defaultPaymentMethod"]>("all");
+  const [salesStatusFilter, setSalesStatusFilter] = useState<"all" | SaleRecord["status"]>("all");
+  const [salesLoading, setSalesLoading] = useState(false);
+  const [salesReloadKey, setSalesReloadKey] = useState(0);
+  const queryInputRef = useRef<HTMLInputElement>(null);
   const canManageProducts = canAccess(currentUser.role, "manage_products");
   const categoryNames = useMemo(() => ["ทั้งหมด", ...categoryList.map((item) => item.name)], [categoryList]);
 
@@ -107,6 +135,27 @@ export default function POSDashboard({ products, categories: initialCategories, 
   useEffect(() => {
     if (!categoryNames.includes(category)) setCategory("ทั้งหมด");
   }, [category, categoryNames]);
+  useEffect(() => {
+    if (activePage !== "sales" || !canAccess(currentUser.role, "sales")) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setSalesLoading(true);
+      try {
+        const params = new URLSearchParams({ period: salesPeriod });
+        if (salesQuery.trim()) params.set("q", salesQuery.trim());
+        const response = await fetch(`/api/sales?${params}`, { signal: controller.signal });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || "โหลดรายการขายไม่สำเร็จ");
+        setSaleRecords(data.sales);
+        setSalesSummary(data.summary);
+      } catch (error) {
+        if (!controller.signal.aborted) setActionError(error instanceof Error ? error.message : "โหลดรายการขายไม่สำเร็จ");
+      } finally {
+        if (!controller.signal.aborted) setSalesLoading(false);
+      }
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [activePage, currentUser.role, salesPeriod, salesQuery, salesReloadKey]);
 
   const filtered = useMemo(() => inventoryProducts.filter((p) => {
     const matchesCategory = category === "ทั้งหมด" || p.category === category;
@@ -117,8 +166,13 @@ export default function POSDashboard({ products, categories: initialCategories, 
     const term = inventorySearch.trim().toLowerCase();
     const matchesTerm = !term || product.name.toLowerCase().includes(term) || product.sku.toLowerCase().includes(term) || product.category.toLowerCase().includes(term);
     const matchesCategory = inventoryCategory === "ทั้งหมด" || product.category === inventoryCategory;
-    return matchesTerm && matchesCategory;
-  }), [inventoryProducts, inventorySearch, inventoryCategory]);
+    const matchesStatus =
+      inventoryStatus === "all" ||
+      (inventoryStatus === "ready" && product.stock > settings.lowStockThreshold) ||
+      (inventoryStatus === "low" && product.stock > 0 && product.stock <= settings.lowStockThreshold) ||
+      (inventoryStatus === "out" && product.stock <= 0);
+    return matchesTerm && matchesCategory && matchesStatus;
+  }), [inventoryProducts, inventorySearch, inventoryCategory, inventoryStatus, settings.lowStockThreshold]);
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
   const maxDiscount = subtotal * (settings.maxDiscountPercent / 100);
   const effectiveDiscount = settings.allowDiscount ? Math.min(discount, maxDiscount) : 0;
@@ -126,13 +180,75 @@ export default function POSDashboard({ products, categories: initialCategories, 
   const vat = settings.vatRate > 0 ? (settings.pricesIncludeVat ? taxableAmount * settings.vatRate / (100 + settings.vatRate) : taxableAmount * (settings.vatRate / 100)) : 0;
   const unroundedTotal = settings.pricesIncludeVat ? taxableAmount : taxableAmount + vat;
   const total = settings.roundingMode === "whole" ? Math.round(unroundedTotal) : unroundedTotal;
+  const receivedValue = Number(amountReceived) || 0;
+  const changeDue = paymentMethod === "cash" ? Math.max(0, receivedValue - total) : 0;
+  const cashPresets = useMemo(() => {
+    const values = [total, Math.ceil(total / 10) * 10, Math.ceil(total / 100) * 100, Math.ceil(total / 500) * 500];
+    return [...new Set(values.map((value) => Math.max(total, value)).filter((value) => value > 0))].slice(0, 4);
+  }, [total]);
+  useEffect(() => {
+    function handleShortcut(event: KeyboardEvent) {
+      if (event.key === "F2") {
+        event.preventDefault();
+        queryInputRef.current?.focus();
+        queryInputRef.current?.select();
+      }
+      if (event.key === "F10" && activePage === "pos" && cart.length > 0 && !showPayment && !showReceipt) {
+        event.preventDefault();
+        beginCheckout();
+      }
+      if (event.key === "Escape" && showPayment && checkoutState !== "saving") setShowPayment(false);
+    }
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [activePage, cart.length, checkoutState, paymentMethod, showPayment, showReceipt, total]);
   const previewBase = 1000;
   const previewVat = settings.vatRate > 0 ? (settings.pricesIncludeVat ? previewBase * settings.vatRate / (100 + settings.vatRate) : previewBase * (settings.vatRate / 100)) : 0;
   const previewBeforeRounding = settings.pricesIncludeVat ? previewBase : previewBase + previewVat;
   const previewTotal = settings.roundingMode === "whole" ? Math.round(previewBeforeRounding) : previewBeforeRounding;
   const lowStock = inventoryProducts.filter((p) => p.stock <= settings.lowStockThreshold).length;
+  const totalInventoryValue = inventoryProducts.reduce((sum, product) => sum + product.price * product.stock, 0);
+  const outOfStock = inventoryProducts.filter((product) => product.stock <= 0).length;
+  const lowStockProducts = inventoryProducts
+    .filter((product) => product.stock <= settings.lowStockThreshold)
+    .sort((a, b) => a.stock - b.stock)
+    .slice(0, 6);
+  const categorySummary = categoryList
+    .map((item) => {
+      const productsInCategory = inventoryProducts.filter((product) => product.category === item.name);
+      return {
+        ...item,
+        stock: productsInCategory.reduce((sum, product) => sum + product.stock, 0),
+        value: productsInCategory.reduce((sum, product) => sum + product.price * product.stock, 0),
+      };
+    })
+    .filter((item) => item.productCount > 0)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 5);
+  const visibleSaleRecords = useMemo(() => saleRecords.filter((sale) => {
+    const matchesPayment = salesPaymentFilter === "all" || sale.paymentMethod === salesPaymentFilter;
+    const matchesStatus = salesStatusFilter === "all" || sale.status === salesStatusFilter;
+    return matchesPayment && matchesStatus;
+  }), [saleRecords, salesPaymentFilter, salesStatusFilter]);
+  const completedVisibleSales = visibleSaleRecords.filter((sale) => sale.status === "completed");
+  const visibleSalesTotal = completedVisibleSales.reduce((sum, sale) => sum + sale.total, 0);
+  const visibleSalesVat = completedVisibleSales.reduce((sum, sale) => sum + sale.vat, 0);
+  const visibleSalesDiscount = completedVisibleSales.reduce((sum, sale) => sum + sale.discount, 0);
+  const largestSale = [...completedVisibleSales].sort((a, b) => b.total - a.total)[0];
+  const latestSale = visibleSaleRecords[0];
+  const paymentSummary = (["cash", "qr", "card"] as const).map((method) => ({
+    method,
+    label: method === "cash" ? "เงินสด" : method === "qr" ? "QR / โอน" : "บัตร",
+    total: completedVisibleSales.filter((sale) => sale.paymentMethod === method).reduce((sum, sale) => sum + sale.total, 0),
+    count: completedVisibleSales.filter((sale) => sale.paymentMethod === method).length,
+  }));
 
   function addToCart(product: Product) {
+    if (product.stock <= 0) {
+      setActionError("สินค้านี้หมดสต็อก");
+      return;
+    }
+    setActionError("");
     setCart((current) => {
       const found = current.find((item) => item.id === product.id);
       return found ? current.map((item) => item.id === product.id ? { ...item, qty: Math.min(item.qty + 1, item.stock) } : item) : [...current, { ...product, qty: 1 }];
@@ -141,8 +257,35 @@ export default function POSDashboard({ products, categories: initialCategories, 
   function changeQty(id: number, amount: number) {
     setCart((current) => current.map((item) => item.id === id ? { ...item, qty: Math.max(0, Math.min(item.stock, item.qty + amount)) } : item).filter((item) => item.qty > 0));
   }
+  function editDiscount() {
+    if (!settings.allowDiscount || !cart.length) return;
+    const value = window.prompt(`ระบุส่วนลด (สูงสุด ${formatMoney(maxDiscount)})`, String(effectiveDiscount));
+    if (value === null) return;
+    const nextDiscount = Number(value);
+    if (!Number.isFinite(nextDiscount) || nextDiscount < 0) {
+      setActionError("ส่วนลดต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป");
+      return;
+    }
+    setDiscount(Math.min(nextDiscount, maxDiscount));
+    setActionError(nextDiscount > maxDiscount ? `จำกัดส่วนลดสูงสุด ${settings.maxDiscountPercent}%` : "");
+  }
+  function choosePayment(method: StoreSettings["defaultPaymentMethod"]) {
+    setPaymentMethod(method);
+    setAmountReceived(method === "cash" ? total.toFixed(2) : "");
+  }
+  function beginCheckout() {
+    if (!cart.length || checkoutState === "saving") return;
+    setActionError("");
+    setAmountReceived(paymentMethod === "cash" ? total.toFixed(2) : "");
+    setShowPayment(true);
+  }
   async function checkout() {
     if (!cart.length || checkoutState === "saving") return;
+    if (paymentMethod === "cash" && receivedValue + 0.001 < total) {
+      setCheckoutState("error");
+      setActionError("จำนวนเงินที่รับน้อยกว่ายอดชำระ");
+      return;
+    }
     setActionError("");
     setCheckoutState("saving");
     try {
@@ -152,6 +295,7 @@ export default function POSDashboard({ products, categories: initialCategories, 
         body: JSON.stringify({
           customerName,
           paymentMethod,
+          amountReceived: paymentMethod === "cash" ? receivedValue : total,
           discount: effectiveDiscount,
           items: cart.map((item) => ({ productId: item.id, quantity: item.qty })),
         }),
@@ -161,16 +305,32 @@ export default function POSDashboard({ products, categories: initialCategories, 
       const soldItems = cart;
       setReceipt(data.receipt);
       setShowReceipt(true);
+      setShowPayment(false);
       setCart([]);
+      setDiscount(0);
+      setAmountReceived("");
       setInventoryProducts((items) => items.map((product) => {
         const sold = soldItems.find((item) => item.id === product.id);
         return sold ? { ...product, stock: Math.max(0, product.stock - sold.qty) } : product;
       }));
       setCheckoutState("idle");
+      setSalesReloadKey((value) => value + 1);
       if (settings.autoPrint) window.setTimeout(() => window.print(), 350);
     } catch (error) {
       setCheckoutState("error");
       setActionError(error instanceof Error ? error.message : "บันทึกใบเสร็จไม่สำเร็จ");
+    }
+  }
+  async function viewSale(id: number) {
+    setActionError("");
+    try {
+      const response = await fetch(`/api/sales?id=${id}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "โหลดใบเสร็จไม่สำเร็จ");
+      setReceipt(data.receipt);
+      setShowReceipt(true);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "โหลดใบเสร็จไม่สำเร็จ");
     }
   }
   async function saveSettings() {
@@ -309,30 +469,51 @@ export default function POSDashboard({ products, categories: initialCategories, 
 
         {activePage === "pos" && <div className="content-grid">
           <section className="catalog">
-            <div className="search-row"><label className="search-box"><Search size={20} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="ค้นหาชื่อสินค้า หรือสแกนบาร์โค้ด..." /><kbd>F2</kbd></label><button className="stock-button" onClick={() => setActivePage("products")}><PackageSearch size={19} /> เช็กสต็อก</button></div>
+            <div className="search-row"><label className="search-box"><Search size={20} /><input ref={queryInputRef} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); const exact = inventoryProducts.find((product) => product.sku.toLowerCase() === query.trim().toLowerCase()); if (exact) { addToCart(exact); setQuery(""); } else if (query.trim()) setActionError("ไม่พบรหัสสินค้าที่สแกน"); } }} placeholder="ค้นหาชื่อสินค้า หรือสแกนบาร์โค้ด..." /><kbd>F2</kbd></label><button className="stock-button" onClick={() => setActivePage("products")}><PackageSearch size={19} /> เช็กสต็อก</button></div>
             <div className="category-row" aria-label="หมวดหมู่สินค้า">{categoryNames.map((item) => <button key={item} className={category === item ? "selected" : ""} onClick={() => setCategory(item)}>{item}</button>)}</div>
             <div className="section-heading"><div><h2>{category === "ทั้งหมด" ? "สินค้าขายดี" : category}</h2><p>เลือกสินค้าเพื่อเพิ่มลงในรายการขาย</p></div><span>{filtered.length} รายการ</span></div>
-            <div className="product-grid">{filtered.map((product) => <button className="product-card" key={product.id} onClick={() => addToCart(product)}><div className="art-wrap" style={{ background: product.color }}><ProductArt icon={product.icon} /><span className={product.stock <= settings.lowStockThreshold ? "stock low" : "stock"}>เหลือ {product.stock}</span></div><div className="product-info"><small>{product.sku}</small><h3>{product.name}</h3><div><strong>฿{product.price.toLocaleString("th-TH")}</strong><span>/ {product.unit}</span><i><Plus size={16} /></i></div></div></button>)}{filtered.length === 0 && <div className="empty-products"><PackageSearch size={38} /><p>ไม่พบสินค้าที่ค้นหา</p></div>}</div>
+            {actionError && checkoutState !== "error" && <div className="catalog-error">{actionError}</div>}
+            <div className="product-grid">{filtered.map((product) => <button className="product-card" key={product.id} disabled={product.stock <= 0} onClick={() => addToCart(product)}><div className="art-wrap" style={{ background: product.color }}><ProductArt icon={product.icon} /><span className={product.stock <= settings.lowStockThreshold ? "stock low" : "stock"}>{product.stock <= 0 ? "หมดสต็อก" : `เหลือ ${product.stock}`}</span></div><div className="product-info"><small>{product.sku}</small><h3>{product.name}</h3><div><strong>฿{product.price.toLocaleString("th-TH")}</strong><span>/ {product.unit}</span><i><Plus size={16} /></i></div></div></button>)}{filtered.length === 0 && <div className="empty-products"><PackageSearch size={38} /><p>ไม่พบสินค้าที่ค้นหา</p></div>}</div>
           </section>
           <aside className="order-panel">
-            <div className="order-header"><div><span className="order-icon"><ReceiptText size={19} /></span><div><small>รายการขาย</small><h2>ออเดอร์ #{settings.receiptPrefix}-0826</h2></div></div><button onClick={() => setCart([])} aria-label="ล้างรายการ"><Trash2 size={17} /></button></div>
+            <div className="order-header"><div><span className="order-icon"><ReceiptText size={19} /></span><div><small>รายการขาย</small><h2>บิลใหม่ · {cart.reduce((sum, item) => sum + item.qty, 0)} ชิ้น</h2></div></div><button onClick={() => { setCart([]); setDiscount(0); setActionError(""); }} aria-label="ล้างรายการ"><Trash2 size={17} /></button></div>
             <button className="customer-row" onClick={() => { const name = window.prompt("ชื่อลูกค้าในใบเสร็จ", customerName); if (name !== null) setCustomerName(name.trim() || "ลูกค้าทั่วไป"); }}><span><CircleUserRound size={20} /> {customerName}</span><Plus size={17} /></button>
             <div className="cart-list">{cart.map((item) => <article className="cart-item" key={item.id}><div className="cart-thumb" style={{ background: item.color }}><Hammer size={20} /></div><div className="cart-detail"><h3>{item.name}</h3><small>{item.sku} · ฿{item.price.toLocaleString("th-TH")}/{item.unit}</small><div className="qty-control"><button onClick={() => changeQty(item.id, -1)}><Minus size={14} /></button><span>{item.qty}</span><button onClick={() => changeQty(item.id, 1)}><Plus size={14} /></button></div></div><strong>฿{(item.price * item.qty).toLocaleString("th-TH")}</strong></article>)}{cart.length === 0 && <div className="empty-cart"><ShoppingCart size={34} /><p>ยังไม่มีสินค้าในรายการ</p><small>เลือกสินค้าจากด้านซ้ายเพื่อเริ่มขาย</small></div>}</div>
-            <div className="summary"><div><span>ยอดรวม ({cart.reduce((s, i) => s + i.qty, 0)} ชิ้น)</span><strong>฿{subtotal.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div><div><span>ส่วนลด {settings.allowDiscount && <button onClick={() => setDiscount(discount ? 0 : Math.min(50, maxDiscount))}>แก้ไข</button>}</span><strong className="discount">-฿{effectiveDiscount.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div><div><span>ภาษีมูลค่าเพิ่ม {settings.vatRate}% {settings.pricesIncludeVat ? "(รวมในราคา)" : ""}</span><strong>฿{vat.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div>{settings.roundingMode === "whole" && <div><span>ปัดเศษ</span><strong>฿{(total - unroundedTotal).toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div>}<div className="grand-total"><span>ยอดชำระ</span><strong>฿{total.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div></div>
-            <div className="payment-types"><button className={paymentMethod === "cash" ? "active" : ""} onClick={() => setPaymentMethod("cash")}><WalletCards size={18} /> เงินสด</button><button className={paymentMethod === "qr" ? "active" : ""} onClick={() => setPaymentMethod("qr")}><ReceiptText size={18} /> QR</button><button className={paymentMethod === "card" ? "active" : ""} onClick={() => setPaymentMethod("card")}><CreditCard size={18} /> บัตร</button></div>{checkoutState === "error" && <div className="checkout-error">{actionError}</div>}<button className="checkout" disabled={!cart.length || checkoutState === "saving"} onClick={checkout}><span>{checkoutState === "saving" ? "กำลังออกใบเสร็จ..." : settings.taxInvoiceEnabled ? `${settings.taxInvoicePrefix || "TAX"} / ชำระเงิน` : "ชำระเงิน"}</span><strong>฿{total.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></button><div className="shortcut"><span><kbd>F8</kbd> พักบิล</span><span><kbd>F10</kbd> ชำระเงิน</span></div>
+            <div className="summary"><div><span>ยอดรวม ({cart.reduce((s, i) => s + i.qty, 0)} ชิ้น)</span><strong>฿{subtotal.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div><div><span>ส่วนลด {settings.allowDiscount && <button onClick={editDiscount}>แก้ไข</button>}</span><strong className="discount">-฿{effectiveDiscount.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div><div><span>ภาษีมูลค่าเพิ่ม {settings.vatRate}% {settings.pricesIncludeVat ? "(รวมในราคา)" : ""}</span><strong>฿{vat.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div>{settings.roundingMode === "whole" && <div><span>ปัดเศษ</span><strong>฿{(total - unroundedTotal).toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div>}<div className="grand-total"><span>ยอดชำระ</span><strong>฿{total.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></div></div>
+            <div className="payment-types"><button className={paymentMethod === "cash" ? "active" : ""} onClick={() => choosePayment("cash")}><WalletCards size={18} /> เงินสด</button><button className={paymentMethod === "qr" ? "active" : ""} onClick={() => choosePayment("qr")}><ReceiptText size={18} /> QR</button><button className={paymentMethod === "card" ? "active" : ""} onClick={() => choosePayment("card")}><CreditCard size={18} /> บัตร</button></div>{checkoutState === "error" && <div className="checkout-error">{actionError}</div>}<button className="checkout" disabled={!cart.length || checkoutState === "saving"} onClick={beginCheckout}><span>{settings.taxInvoiceEnabled ? `${settings.taxInvoicePrefix || "TAX"} / ชำระเงิน` : "ชำระเงิน"}</span><strong>฿{total.toLocaleString("th-TH", { minimumFractionDigits: 2 })}</strong></button><div className="shortcut"><span><kbd>F2</kbd> ค้นหาสินค้า</span><span><kbd>F10</kbd> ชำระเงิน</span></div>
           </aside>
         </div>}
 
         {activePage === "products" && <div className="page-content">
-          <div className="page-actions"><div><p>{canManageProducts?"จัดการสินค้า ราคา และจำนวนคงเหลือ":"ดูรายการสินค้าและจำนวนคงเหลือ"}</p></div>{canManageProducts&&<><button className="outline-action"><FileText size={17} /> นำเข้า Excel</button><button className="primary-action" onClick={()=>openProductForm()}><PackagePlus size={17} /> เพิ่มสินค้าใหม่</button></>}</div>
-          <div className="metrics"><Metric label="สินค้าทั้งหมด" value={`${inventoryProducts.length} รายการ`} note="ใช้งานอยู่ทั้งหมด" icon={<Boxes />} /><Metric label="มูลค่าสต็อก" value={`฿${inventoryProducts.reduce((s,p)=>s+p.price*p.stock,0).toLocaleString("th-TH")}`} note="ราคาขายโดยประมาณ" icon={<WalletCards />} tone="blue" /><Metric label="สต็อกใกล้หมด" value={`${inventoryProducts.filter(p=>p.stock<=settings.lowStockThreshold).length} รายการ`} note={`ต่ำกว่าหรือเท่ากับ ${settings.lowStockThreshold}`} icon={<Bell />} tone="orange" /><Metric label="หมวดหมู่" value={`${new Set(inventoryProducts.map(p=>p.category)).size} หมวด`} note="จัดหมวดหมู่แล้ว" icon={<SlidersHorizontal />} tone="green" /></div>
-          <section className="data-panel"><div className="panel-toolbar"><label className="table-search"><Search size={17} /><input value={inventorySearch} onChange={e=>setInventorySearch(e.target.value)} placeholder="ค้นหาสินค้า SKU หรือหมวดหมู่" /></label><label className="table-select"><SlidersHorizontal size={16}/><select value={inventoryCategory} onChange={e=>setInventoryCategory(e.target.value)}>{categoryNames.map(item=><option key={item} value={item}>{item}</option>)}</select></label></div>{actionError&&<div className="table-error">{actionError}</div>}<div className="table-scroll"><table><thead><tr><th>สินค้า</th><th>หมวดหมู่</th><th>ราคาขาย</th><th>คงเหลือ</th><th>สถานะ</th>{canManageProducts&&<th>จัดการ</th>}</tr></thead><tbody>{visibleInventoryProducts.map(p=><tr key={p.id}><td><div className="product-cell"><span style={{background:p.color}}><Hammer size={18}/></span><div><strong>{p.name}</strong><small>{p.sku} · ต่อ{p.unit}</small></div></div></td><td>{p.category}</td><td><strong>฿{p.price.toLocaleString("th-TH")}</strong></td><td><div className="stock-adjust">{canManageProducts&&<button onClick={()=>adjustProductStock(p,-1)} aria-label="ลดสต็อก"><Minus size={13}/></button>}<strong>{p.stock.toLocaleString("th-TH")}</strong><span>{p.unit}</span>{canManageProducts&&<button onClick={()=>adjustProductStock(p,1)} aria-label="เพิ่มสต็อก"><Plus size={13}/></button>}</div></td><td><span className={`status-chip ${p.stock <= settings.lowStockThreshold ? "warning":"success"}`}>{p.stock <= settings.lowStockThreshold ? "ใกล้หมด":"พร้อมขาย"}</span></td>{canManageProducts&&<td><div className="row-actions"><button className="icon-button" aria-label="แก้ไข" onClick={()=>openProductForm(p)}><Pencil size={15}/></button><button className="icon-button danger-button" aria-label="ลบ" onClick={()=>removeProduct(p.id)}><Trash2 size={15}/></button></div></td>}</tr>)}</tbody></table></div>{visibleInventoryProducts.length===0&&<div className="empty-table">ไม่พบสินค้าที่ตรงกับการค้นหา</div>}</section>
+          <div className="page-actions"><div><p>{canManageProducts?"จัดการสินค้า ราคา คงเหลือ และสถานะคลัง":"ดูรายการสินค้า ราคา และจำนวนคงเหลือ"}</p></div>{canManageProducts&&<><button className="outline-action"><FileText size={17} /> นำเข้า Excel</button><button className="primary-action" onClick={()=>openProductForm()}><PackagePlus size={17} /> เพิ่มสินค้าใหม่</button></>}</div>
+          <div className="metrics"><Metric label="สินค้าทั้งหมด" value={`${inventoryProducts.length} รายการ`} note="ใช้งานอยู่ทั้งหมด" icon={<Boxes />} /><Metric label="มูลค่าสต็อก" value={`฿${totalInventoryValue.toLocaleString("th-TH")}`} note="ราคาขายโดยประมาณ" icon={<WalletCards />} tone="blue" /><Metric label="สต็อกใกล้หมด" value={`${lowStock} รายการ`} note={`ต่ำกว่าหรือเท่ากับ ${settings.lowStockThreshold}`} icon={<Bell />} tone="orange" /><Metric label="สินค้าหมด" value={`${outOfStock} รายการ`} note="ต้องเติมก่อนขาย" icon={<PackageCheck />} tone={outOfStock ? "orange" : "green"} /></div>
+          <div className="inventory-workbench">
+            <section className="inventory-card urgent">
+              <div className="inventory-card-title"><span><Bell size={18}/></span><div><h2>รายการต้องเติมสต็อก</h2><p>เรียงจากจำนวนคงเหลือน้อยที่สุด</p></div></div>
+              <div className="inventory-alert-list">{lowStockProducts.map((product)=><article key={product.id}><div><strong>{product.name}</strong><small>{product.sku} · {product.category}</small></div><span className={product.stock <= 0 ? "danger" : ""}>{product.stock} {product.unit}</span>{canManageProducts&&<button className="table-action" onClick={()=>openProductForm(product)}>เติมสต็อก</button>}</article>)}{lowStockProducts.length===0&&<p>สต็อกทุกตัวอยู่ในเกณฑ์ปกติ</p>}</div>
+            </section>
+            <section className="inventory-card">
+              <div className="inventory-card-title"><span><SlidersHorizontal size={18}/></span><div><h2>มูลค่าตามหมวดสินค้า</h2><p>ใช้ดูน้ำหนักสต็อกในคลัง</p></div></div>
+              <div className="category-stock-list">{categorySummary.map((item)=><button key={item.id} onClick={()=>setInventoryCategory(item.name)}><div><strong>{item.name}</strong><small>{item.stock.toLocaleString("th-TH")} ชิ้น/หน่วยรวม</small></div><span>฿{item.value.toLocaleString("th-TH")}</span></button>)}{categorySummary.length===0&&<p>ยังไม่มีข้อมูลหมวดสินค้า</p>}</div>
+            </section>
+          </div>
+          <section className="data-panel"><div className="panel-toolbar"><label className="table-search"><Search size={17} /><input value={inventorySearch} onChange={e=>setInventorySearch(e.target.value)} placeholder="ค้นหาสินค้า SKU หรือหมวดหมู่" /></label><label className="table-select"><SlidersHorizontal size={16}/><select value={inventoryCategory} onChange={e=>setInventoryCategory(e.target.value)}>{categoryNames.map(item=><option key={item} value={item}>{item}</option>)}</select></label><div className="segmented inventory-status-filter"><button className={inventoryStatus==="all"?"active":""} onClick={()=>setInventoryStatus("all")}>ทั้งหมด</button><button className={inventoryStatus==="ready"?"active":""} onClick={()=>setInventoryStatus("ready")}>พร้อมขาย</button><button className={inventoryStatus==="low"?"active":""} onClick={()=>setInventoryStatus("low")}>ใกล้หมด</button><button className={inventoryStatus==="out"?"active":""} onClick={()=>setInventoryStatus("out")}>หมด</button></div></div>{actionError&&<div className="table-error">{actionError}</div>}<div className="table-scroll"><table><thead><tr><th>สินค้า</th><th>หมวดหมู่</th><th>ราคาขาย</th><th>มูลค่าคงเหลือ</th><th>คงเหลือ</th><th>สถานะ</th>{canManageProducts&&<th>จัดการ</th>}</tr></thead><tbody>{visibleInventoryProducts.map(p=><tr key={p.id}><td><div className="product-cell"><span style={{background:p.color}}><Hammer size={18}/></span><div><strong>{p.name}</strong><small>{p.sku} · ต่อ{p.unit}</small></div></div></td><td>{p.category}</td><td><strong>฿{p.price.toLocaleString("th-TH")}</strong></td><td><strong>฿{(p.price*p.stock).toLocaleString("th-TH")}</strong></td><td><div className="stock-adjust">{canManageProducts&&<button onClick={()=>adjustProductStock(p,-1)} aria-label="ลดสต็อก"><Minus size={13}/></button>}<strong>{p.stock.toLocaleString("th-TH")}</strong><span>{p.unit}</span>{canManageProducts&&<button onClick={()=>adjustProductStock(p,1)} aria-label="เพิ่มสต็อก"><Plus size={13}/></button>}</div></td><td><span className={`status-chip ${p.stock <= 0 ? "danger" : p.stock <= settings.lowStockThreshold ? "warning":"success"}`}>{p.stock <= 0 ? "หมดสต็อก" : p.stock <= settings.lowStockThreshold ? "ใกล้หมด":"พร้อมขาย"}</span></td>{canManageProducts&&<td><div className="row-actions"><button className="icon-button" aria-label="แก้ไข" onClick={()=>openProductForm(p)}><Pencil size={15}/></button><button className="icon-button danger-button" aria-label="ลบ" onClick={()=>removeProduct(p.id)}><Trash2 size={15}/></button></div></td>}</tr>)}</tbody></table></div>{visibleInventoryProducts.length===0&&<div className="empty-table">ไม่พบสินค้าที่ตรงกับการค้นหา</div>}</section>
         </div>}
 
         {activePage === "sales" && <div className="page-content">
           <div className="page-actions"><div><p>ตรวจสอบรายการขายและการชำระเงินทั้งหมด</p></div><button className="outline-action"><Printer size={17}/> พิมพ์รายงาน</button><button className="primary-action" onClick={()=>setActivePage("pos")}><Plus size={17}/> เปิดบิลใหม่</button></div>
-          <div className="metrics"><Metric label="ยอดขายวันนี้" value="฿48,546.05" note="เพิ่มขึ้น 12.8%" icon={<WalletCards/>}/><Metric label="จำนวนบิล" value="42 บิล" note="เฉลี่ย ฿1,156 / บิล" icon={<ReceiptText/>} tone="blue"/><Metric label="รอชำระ" value="1 รายการ" note="มูลค่า ฿28,650" icon={<Bell/>} tone="orange"/><Metric label="คืนสินค้า" value="2 รายการ" note="มูลค่า ฿1,240" icon={<RotateCcw/>} tone="green"/></div>
-          <section className="data-panel"><div className="panel-toolbar"><div className="segmented"><button className="active">วันนี้</button><button>7 วัน</button><button>เดือนนี้</button></div><label className="table-search compact"><Search size={17}/><input placeholder="ค้นหาเลขที่บิลหรือลูกค้า"/></label></div><div className="table-scroll"><table><thead><tr><th>เลขที่บิล</th><th>เวลา</th><th>ลูกค้า</th><th>สินค้า</th><th>ชำระโดย</th><th>ยอดสุทธิ</th><th>สถานะ</th></tr></thead><tbody>{sales.map(s=><tr key={s.no}><td><strong className="link-text">{s.no}</strong></td><td>{s.time}</td><td>{s.customer}</td><td>{s.items} รายการ</td><td>{s.payment}</td><td><strong>฿{s.total.toLocaleString("th-TH",{minimumFractionDigits:2})}</strong></td><td><span className={`status-chip ${s.status==="สำเร็จ"?"success":s.status==="รอชำระ"?"warning":"danger"}`}>{s.status}</span></td></tr>)}</tbody></table></div></section>
+          <div className="metrics"><Metric label="ยอดขายที่แสดง" value={formatMoney(visibleSalesTotal)} note={`${completedVisibleSales.length} บิลที่ชำระสำเร็จ`} icon={<WalletCards/>}/><Metric label="ยอดก่อนกรอง" value={formatMoney(salesSummary.totalSales)} note={`${salesSummary.billCount} บิลในช่วงเวลา`} icon={<ReceiptText/>} tone="blue"/><Metric label="VAT / ส่วนลด" value={`${formatMoney(visibleSalesVat)} / ${formatMoney(visibleSalesDiscount)}`} note="รวมจากรายการที่แสดง" icon={<FileText/>} tone="orange"/><Metric label="รายการสินค้า" value={`${visibleSaleRecords.reduce((sum, sale) => sum + sale.itemCount, 0)} ชิ้น`} note="รวมสินค้าที่ขายในตาราง" icon={<Boxes/>} tone="green"/></div>
+          <div className="sales-workbench">
+            <section className="sales-card">
+              <div className="sales-card-title"><span><WalletCards size={18}/></span><div><h2>แยกตามวิธีชำระ</h2><p>ยอดเฉพาะบิลสำเร็จที่ผ่านตัวกรอง</p></div></div>
+              <div className="payment-summary-list">{paymentSummary.map((item)=><button key={item.method} className={salesPaymentFilter === item.method ? "active" : ""} onClick={()=>setSalesPaymentFilter(item.method)}><div><strong>{item.label}</strong><small>{item.count} บิล</small></div><span>{formatMoney(item.total)}</span></button>)}</div>
+            </section>
+            <section className="sales-card">
+              <div className="sales-card-title"><span><ReceiptText size={18}/></span><div><h2>ภาพรวมบิล</h2><p>ตรวจบิลล่าสุดและบิลมูลค่าสูง</p></div></div>
+              <div className="sales-highlight-list"><article><small>บิลล่าสุด</small>{latestSale?<><button className="sale-link" onClick={()=>viewSale(latestSale.id)}>{latestSale.receiptNo}</button><strong>{formatMoney(latestSale.total)}</strong></>:<span>ยังไม่มีข้อมูล</span>}</article><article><small>บิลสูงสุด</small>{largestSale?<><button className="sale-link" onClick={()=>viewSale(largestSale.id)}>{largestSale.receiptNo}</button><strong>{formatMoney(largestSale.total)}</strong></>:<span>ยังไม่มีข้อมูล</span>}</article></div>
+            </section>
+          </div>
+          <section className="data-panel"><div className="panel-toolbar sales-toolbar"><div className="segmented"><button className={salesPeriod==="today"?"active":""} onClick={()=>setSalesPeriod("today")}>วันนี้</button><button className={salesPeriod==="7days"?"active":""} onClick={()=>setSalesPeriod("7days")}>7 วัน</button><button className={salesPeriod==="month"?"active":""} onClick={()=>setSalesPeriod("month")}>เดือนนี้</button></div><div className="segmented"><button className={salesStatusFilter==="all"?"active":""} onClick={()=>setSalesStatusFilter("all")}>ทุกสถานะ</button><button className={salesStatusFilter==="completed"?"active":""} onClick={()=>setSalesStatusFilter("completed")}>สำเร็จ</button><button className={salesStatusFilter==="refunded"?"active":""} onClick={()=>setSalesStatusFilter("refunded")}>คืนเงิน</button><button className={salesStatusFilter==="voided"?"active":""} onClick={()=>setSalesStatusFilter("voided")}>ยกเลิก</button></div><label className="table-select"><WalletCards size={16}/><select value={salesPaymentFilter} onChange={event=>setSalesPaymentFilter(event.target.value as typeof salesPaymentFilter)}><option value="all">ทุกวิธีชำระ</option><option value="cash">เงินสด</option><option value="qr">QR / โอน</option><option value="card">บัตร</option></select></label><label className="table-search compact"><Search size={17}/><input value={salesQuery} onChange={event=>setSalesQuery(event.target.value)} placeholder="ค้นหาเลขที่บิลหรือลูกค้า"/></label></div>{actionError&&<div className="table-error">{actionError}</div>}<div className="table-scroll"><table><thead><tr><th>เลขที่บิล</th><th>ใบกำกับภาษี</th><th>วันเวลา</th><th>ลูกค้า</th><th>พนักงาน</th><th>สินค้า</th><th>ชำระโดย</th><th>ยอดก่อน VAT</th><th>VAT</th><th>ยอดสุทธิ</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>{visibleSaleRecords.map(sale=><tr key={sale.id}><td><button className="sale-link" onClick={()=>viewSale(sale.id)}>{sale.receiptNo}</button></td><td>{sale.taxInvoiceNo || "-"}</td><td>{new Date(sale.createdAt).toLocaleString("th-TH",{dateStyle:"short",timeStyle:"short"})}</td><td>{sale.customerName}</td><td>{sale.cashierName || "-"}</td><td>{sale.itemCount} ชิ้น</td><td>{sale.paymentLabel}</td><td>{formatMoney(sale.subtotal - sale.discount)}</td><td>{formatMoney(sale.vat)}</td><td><strong>{formatMoney(sale.total)}</strong></td><td><span className={`status-chip ${sale.status==="completed"?"success":sale.status==="refunded"?"warning":"danger"}`}>{sale.status==="completed"?"สำเร็จ":sale.status==="refunded"?"คืนเงิน":"ยกเลิก"}</span></td><td><button className="table-action" onClick={()=>viewSale(sale.id)}>ดูใบเสร็จ</button></td></tr>)}</tbody></table></div>{salesLoading&&<div className="empty-table">กำลังโหลดรายการขาย...</div>}{!salesLoading&&saleRecords.length===0&&<div className="empty-table">ยังไม่มีรายการขายในช่วงเวลานี้</div>}{!salesLoading&&saleRecords.length>0&&visibleSaleRecords.length===0&&<div className="empty-table">ไม่พบรายการขายตามตัวกรองนี้</div>}</section>
         </div>}
 
         {activePage === "delivery" && <div className="page-content">
@@ -425,6 +606,17 @@ export default function POSDashboard({ products, categories: initialCategories, 
           </div></div>
         </div>}
 
+        {showPayment && <div className="modal-backdrop payment-backdrop" role="presentation" onMouseDown={() => checkoutState !== "saving" && setShowPayment(false)}>
+          <form className="app-modal payment-modal" onSubmit={(event) => { event.preventDefault(); void checkout(); }} onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-title"><div><h2>รับชำระเงิน</h2><p>ตรวจสอบยอด เลือกวิธีชำระ และยืนยันการขาย</p></div><button type="button" disabled={checkoutState === "saving"} onClick={() => setShowPayment(false)}><X/></button></div>
+            <div className="payment-total-card"><span>ยอดที่ต้องชำระ</span><strong>{formatMoney(total)}</strong><small>{cart.reduce((sum, item) => sum + item.qty, 0)} ชิ้น · ลูกค้า {customerName}</small></div>
+            <div className="payment-method-grid" role="group" aria-label="วิธีชำระเงิน"><button type="button" className={paymentMethod === "cash" ? "active" : ""} onClick={() => choosePayment("cash")}><WalletCards/>เงินสด</button><button type="button" className={paymentMethod === "qr" ? "active" : ""} onClick={() => choosePayment("qr")}><ReceiptText/>QR / โอน</button><button type="button" className={paymentMethod === "card" ? "active" : ""} onClick={() => choosePayment("card")}><CreditCard/>บัตร</button></div>
+            {paymentMethod === "cash" ? <div className="cash-payment"><label>จำนวนเงินที่รับ<input autoFocus required type="number" inputMode="decimal" min={total} step="0.01" value={amountReceived} onChange={(event) => { setAmountReceived(event.target.value); setCheckoutState("idle"); setActionError(""); }}/></label><div className="cash-presets">{cashPresets.map((value) => <button type="button" key={value} onClick={() => setAmountReceived(value.toFixed(2))}>{value === total ? "รับพอดี" : formatMoney(value)}</button>)}</div><div className="change-card"><span>เงินทอน</span><strong>{formatMoney(changeDue)}</strong></div></div> : <div className="electronic-payment"><span className="payment-ready"><Check/></span><div><strong>{paymentMethod === "qr" ? "ยืนยันว่าได้รับยอดโอนแล้ว" : "ยืนยันว่ารูดบัตรสำเร็จแล้ว"}</strong><small>ยอดชำระ {formatMoney(total)} จะถูกบันทึกเต็มจำนวน</small></div></div>}
+            {checkoutState === "error" && <div className="checkout-error">{actionError}</div>}
+            <div className="modal-actions"><button type="button" className="outline-action" disabled={checkoutState === "saving"} onClick={() => setShowPayment(false)}>ย้อนกลับ</button><button className="primary-action payment-confirm" disabled={checkoutState === "saving" || (paymentMethod === "cash" && receivedValue < total)}><Check size={17}/>{checkoutState === "saving" ? "กำลังบันทึกการขาย..." : `ยืนยันรับชำระ ${formatMoney(total)}`}</button></div>
+          </form>
+        </div>}
+
         {showReceipt && receipt && <div className="modal-backdrop receipt-backdrop" role="presentation" onMouseDown={() => setShowReceipt(false)}>
           <section className="app-modal receipt-modal" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-title no-print"><div><h2>ใบเสร็จรับเงิน</h2><p>บันทึกการขายเรียบร้อยแล้ว สามารถพิมพ์หรือปิดเพื่อเริ่มบิลใหม่ได้</p></div><button type="button" onClick={() => setShowReceipt(false)}><X/></button></div>
@@ -437,7 +629,7 @@ export default function POSDashboard({ products, categories: initialCategories, 
               <div className="receipt-divider"/>
               <div className="receipt-items">{receipt.items.map((item) => <div key={`${receipt.id}-${item.productId}`}><span><strong>{item.name}</strong><small>{item.sku} · {item.quantity} {item.unit} x {formatMoney(item.unitPrice)}</small></span><b>{formatMoney(item.lineTotal)}</b></div>)}</div>
               <div className="receipt-divider"/>
-              <div className="receipt-totals"><div><span>ยอดรวมสินค้า</span><strong>{formatMoney(receipt.subtotal)}</strong></div><div><span>ส่วนลด</span><strong>-{formatMoney(receipt.discount)}</strong></div><div><span>VAT {receipt.settings.vatRate}% {receipt.settings.pricesIncludeVat ? "(รวมในราคา)" : ""}</span><strong>{formatMoney(receipt.vat)}</strong></div>{Math.abs(receipt.rounding) >= 0.01 && <div><span>ปัดเศษ</span><strong>{formatMoney(receipt.rounding)}</strong></div>}<div className="receipt-grand-total"><span>ยอดชำระสุทธิ</span><strong>{formatMoney(receipt.total)}</strong></div></div>
+              <div className="receipt-totals"><div><span>ยอดรวมสินค้า</span><strong>{formatMoney(receipt.subtotal)}</strong></div><div><span>ส่วนลด</span><strong>-{formatMoney(receipt.discount)}</strong></div><div><span>VAT {receipt.settings.vatRate}% {receipt.settings.pricesIncludeVat ? "(รวมในราคา)" : ""}</span><strong>{formatMoney(receipt.vat)}</strong></div>{Math.abs(receipt.rounding) >= 0.01 && <div><span>ปัดเศษ</span><strong>{formatMoney(receipt.rounding)}</strong></div>}<div className="receipt-grand-total"><span>ยอดชำระสุทธิ</span><strong>{formatMoney(receipt.total)}</strong></div>{receipt.paymentMethod === "cash" && <><div><span>รับเงิน</span><strong>{formatMoney(receipt.amountReceived)}</strong></div><div><span>เงินทอน</span><strong>{formatMoney(receipt.changeDue)}</strong></div></>}</div>
               <div className="receipt-footer">{receipt.settings.receiptFooter || "ขอบคุณที่ใช้บริการ"}</div>
             </div>
             <div className="modal-actions receipt-actions no-print"><button type="button" className="outline-action" onClick={() => window.print()}><Printer size={16}/> พิมพ์ใบเสร็จ</button><button type="button" className="primary-action" onClick={() => { setShowReceipt(false); setReceipt(null); setCustomerName("ลูกค้าทั่วไป"); }}><Plus size={16}/> เปิดบิลใหม่</button></div>
